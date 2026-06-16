@@ -767,9 +767,8 @@ class TestSendEmail:
         send_email(str(xlsx), 'testuser', ['test@example.com'])
         mock_server.starttls.assert_called_once()
 
-    def test_test_mode_redirect(self, tmp_path, set_smtp_env, monkeypatch):
-        """When test_reviever_email is set, redirect all emails."""
-        monkeypatch.setenv('test_reviever_email', 'test@redirect.com')
+    def test_receives_original_recipients(self, tmp_path, set_smtp_env, monkeypatch):
+        """send_email sends to the provided recipients (redirection handled by callers)."""
         html = tmp_path / 'test.html'
         xlsx = tmp_path / 'test.xlsx'
         html.write_text('<html><body>Content</body></html>', encoding='utf-8')
@@ -784,8 +783,8 @@ class TestSendEmail:
 
         send_email(str(xlsx), 'testuser', ['original@example.com'])
         call_args = mock_server.sendmail.call_args
-        # receivers should be redirected
-        assert 'test@redirect.com' in str(call_args)
+        # send_email sends to the original recipients (no internal redirect)
+        assert 'original@example.com' in str(call_args)
 
     def test_smtp_exception_logged(self, tmp_path, set_smtp_env, monkeypatch):
         """SMTP exceptions are logged, not raised."""

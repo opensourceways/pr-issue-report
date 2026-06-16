@@ -58,6 +58,11 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
     :param whitelist_active: whether whitelist filtering is enabled
     """
     log.logger.info('=' * 25 + ' ISSUE STATISTICS ' + '=' * 25)
+    test_email = os.getenv('test_reviever_email', '').strip()
+    test_mode = bool(test_email)
+    if test_mode:
+        log.logger.info('[TEST MODE] All issue emails will be sent to {}, max 3 emails'.format(test_email))
+    MAX_EMAILS = 3
     email_mappings = get_email_mappings()
     mapping_lists = sorted(list(email_mappings.keys()))
     maintainer_issue_dict = {}
@@ -162,7 +167,7 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
 
     def send_issue_email(issue_list, receiver, role, compare_dict):
         nonlocal email_sent_count
-        if whitelist_active and receiver not in whitelist:
+        if not test_mode and whitelist_active and receiver not in whitelist:
             log.logger.info('Receiver {} not in whitelist, skipping issue email'.format(receiver))
             return False
         if not issue_list:
@@ -188,7 +193,10 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
         return html_path
 
     for receiver in sorted(maintainer_issue_dict.keys()):
-        if whitelist_active and receiver not in whitelist:
+        if test_mode:
+            if email_sent_count >= MAX_EMAILS:
+                break
+        elif whitelist_active and receiver not in whitelist:
             log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
             continue
         html_m = send_issue_email(maintainer_issue_dict[receiver], receiver, 'maintainer', compare_dict)
@@ -206,22 +214,33 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
                                            '<h3 style="margin-top:30px">作为 Committer 的 Issue</h3>' + body_c.split('<body>')[1].split('</body>')[0] + '</body>')
             with open(html_m, 'w', encoding='utf-8') as f:
                 f.write(body_combined)
-        send_email(html_m.replace('.html', '.xlsx'), receiver, [email_address],
+        actual_receivers = [test_email] if test_mode else [email_address]
+        send_email(html_m.replace('.html', '.xlsx'), receiver, actual_receivers,
                    'openEuler 待处理Issue汇总',
                    body_text='以下是您参与openEuler社区的SIG仓库下待处理的Issue，烦请您及时跟进')
         email_sent_count += 1
-        log.logger.info('Issue email {} of 3 sent'.format(email_sent_count))
+        if test_mode:
+            log.logger.info('[TEST MODE] Issue email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+        else:
+            log.logger.info('Issue email {} sent to {}'.format(email_sent_count, email_address))
 
     for receiver in sorted(committer_issue_dict.keys()):
+        if test_mode:
+            if email_sent_count >= MAX_EMAILS:
+                break
         html_c = send_issue_email(committer_issue_dict[receiver], receiver, 'committer', compare_dict)
         if not html_c:
             continue
         email_address = email_mappings.get(receiver)
-        send_email(html_c.replace('.html', '.xlsx'), receiver, [email_address],
+        actual_receivers = [test_email] if test_mode else [email_address]
+        send_email(html_c.replace('.html', '.xlsx'), receiver, actual_receivers,
                    'openEuler 待处理Issue汇总（Committer）',
                    body_text='以下是您参与openEuler社区的SIG仓库下待处理的Issue，烦请您及时跟进')
         email_sent_count += 1
-        log.logger.info('Issue email {} of 3 sent'.format(email_sent_count))
+        if test_mode:
+            log.logger.info('[TEST MODE] Issue email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+        else:
+            log.logger.info('Issue email {} sent to {}'.format(email_sent_count, email_address))
 
 
 # ---------------------------------------------------------------------------

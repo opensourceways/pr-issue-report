@@ -444,10 +444,6 @@ def send_email(xlsx_file, nickname, receivers, subject='openEuler 待处理PR汇
     host = os.getenv('smtp_host', '').strip()
     password = os.getenv('email_password', '').strip()
     sender = os.getenv('email_sender', '').strip()
-    test_email = os.getenv('test_reviever_email', '').strip()
-    if test_email:
-        log.logger.info('Test mode: redirecting email from {} to {}'.format(receivers, test_email))
-        receivers = [test_email]
     msg = MIMEMultipart()
     html_file = xlsx_file.replace('.xlsx', '.html')
     with open(html_file, 'r', encoding='utf-8') as f:

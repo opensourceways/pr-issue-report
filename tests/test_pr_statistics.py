@@ -342,6 +342,69 @@ class TestPrStatistics:
         assert len(c1_emails) == 1
         assert 'Committer' in c1_emails[0][2]
 
+    def test_test_mode_limits_3_emails(self, tmp_path, monkeypatch,
+                                        sigs_sample, repos_pulls_mapping_sample,
+                                        compare_dict_sample):
+        """In test mode, only 3 emails are sent, all to the test address."""
+        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+        # Create 5 maintainers, each with PRs
+        monkeypatch.setattr('pr_statistics.get_email_mappings',
+                            lambda: {'m{}'.format(i): 'm{}@e.com'.format(i) for i in range(1, 6)})
+        monkeypatch.setattr('pr_statistics.get_maintainers',
+                            lambda sig: (['m1', 'm2', 'm3', 'm4', 'm5'], True))
+        monkeypatch.setattr('pr_statistics.get_committers_mapping', lambda sig: {})
+
+        monkeypatch.setattr('pr_statistics.csv_to_xlsx',
+                            lambda c: c.replace('.csv', '.xlsx'))
+        sent_emails = []
+        def fake_send(xlsx, nickname, receivers, subject='', **kw):
+            sent_emails.append((nickname, receivers, subject))
+        monkeypatch.setattr('pr_statistics.send_email', fake_send)
+        monkeypatch.setattr('pr_statistics.excel_optimization',
+                            lambda x, c, is_issue=False: None)
+
+        # Create 5 maintainer entries with one PR each
+        pulls = {}
+        for i in range(1, 6):
+            key = 'openeuler/ai-framework/branch{}'.format(i)
+            pulls[key] = self._make_pull_item(
+                'https://gitcode.com/openeuler/ai-framework/pulls/{}'.format(i),
+                ref='branch{}'.format(i))
+
+        pr_statistics(str(tmp_path), sigs_sample, pulls,
+                      compare_dict_sample, [], whitelist_active=False)
+
+        assert len(sent_emails) == 3
+        for _, receivers, _ in sent_emails:
+            assert receivers == ['test@example.com']
+
+    def test_test_mode_skips_whitelist(self, tmp_path, monkeypatch,
+                                        sigs_sample, repos_pulls_mapping_sample,
+                                        compare_dict_sample):
+        """In test mode, whitelist filtering is skipped."""
+        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+        monkeypatch.setattr('pr_statistics.get_email_mappings',
+                            lambda: {'m1': 'm1@e.com'})
+        monkeypatch.setattr('pr_statistics.get_maintainers',
+                            lambda sig: (['m1'], True))
+        monkeypatch.setattr('pr_statistics.get_committers_mapping', lambda sig: {})
+
+        monkeypatch.setattr('pr_statistics.csv_to_xlsx',
+                            lambda c: c.replace('.csv', '.xlsx'))
+        sent_emails = []
+        monkeypatch.setattr('pr_statistics.send_email',
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+        monkeypatch.setattr('pr_statistics.excel_optimization',
+                            lambda x, c, is_issue=False: None)
+
+        # Pass empty whitelist — in prod mode this would block
+        pr_statistics(str(tmp_path), sigs_sample, repos_pulls_mapping_sample,
+                      compare_dict_sample, [], whitelist_active=True)
+
+        # Even with empty whitelist, test mode still sends
+        assert len(sent_emails) > 0
+        assert sent_emails[0][1] == ['test@example.com']
+
 
 # ---------------------------------------------------------------------------
 # main

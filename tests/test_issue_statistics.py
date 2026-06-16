@@ -286,6 +286,75 @@ class TestIssueStatistics:
         assert len(c1_emails) == 1
         assert 'Committer' in c1_emails[0][2]
 
+    def test_test_mode_limits_3_emails(self, tmp_path, monkeypatch,
+                                        sigs_sample, repos_issues_mapping_sample,
+                                        compare_dict_sample):
+        """In test mode, only 3 issue emails are sent, all to the test address."""
+        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+        # Create 5 maintainers, each with issues
+        monkeypatch.setattr('issue_statistics.get_email_mappings',
+                            lambda: {'m{}'.format(i): 'm{}@e.com'.format(i) for i in range(1, 6)})
+        monkeypatch.setattr('issue_statistics.get_maintainers',
+                            lambda sig: (['m1', 'm2', 'm3', 'm4', 'm5'], True))
+        monkeypatch.setattr('issue_statistics.get_committers_mapping', lambda sig: {})
+
+        monkeypatch.setattr('issue_statistics.csv_to_xlsx',
+                            lambda c: c.replace('.csv', '.xlsx'))
+        sent_emails = []
+        def fake_send(xlsx, nickname, receivers, subject='', **kw):
+            sent_emails.append((nickname, receivers, subject))
+        monkeypatch.setattr('issue_statistics.send_email', fake_send)
+        monkeypatch.setattr('issue_statistics.excel_optimization',
+                            lambda x, c, is_issue=True: None)
+
+        # Create 5 maintainer entries with varied data
+        issues = {}
+        for i in range(1, 6):
+            key = 'openeuler/ai-framework/branch{}'.format(i)
+            issues[key] = {
+                'title': 'Issue {}'.format(i),
+                'link': 'https://gitcode.com/openeuler/ai-framework/issues/{}'.format(i),
+                'created_at': (datetime.datetime.now() - datetime.timedelta(days=i)).strftime(
+                    '%Y-%m-%d %H:%M:%S'),
+                'issue_type': '缺陷',
+                'issue_state': '待确认',
+                'assignee': '',
+            }
+
+        issue_statistics(str(tmp_path), sigs_sample, issues,
+                         compare_dict_sample, [], whitelist_active=False)
+
+        assert len(sent_emails) == 3
+        for _, receivers, _ in sent_emails:
+            assert receivers == ['test@example.com']
+
+    def test_test_mode_skips_whitelist(self, tmp_path, monkeypatch,
+                                        sigs_sample, repos_issues_mapping_sample,
+                                        compare_dict_sample):
+        """In test mode, issue whitelist filtering is skipped."""
+        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+        monkeypatch.setattr('issue_statistics.get_email_mappings',
+                            lambda: {'m1': 'm1@e.com'})
+        monkeypatch.setattr('issue_statistics.get_maintainers',
+                            lambda sig: (['m1'], True))
+        monkeypatch.setattr('issue_statistics.get_committers_mapping', lambda sig: {})
+
+        monkeypatch.setattr('issue_statistics.csv_to_xlsx',
+                            lambda c: c.replace('.csv', '.xlsx'))
+        sent_emails = []
+        monkeypatch.setattr('issue_statistics.send_email',
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+        monkeypatch.setattr('issue_statistics.excel_optimization',
+                            lambda x, c, is_issue=True: None)
+
+        # Pass empty whitelist — in prod mode this would block
+        issue_statistics(str(tmp_path), sigs_sample, repos_issues_mapping_sample,
+                         compare_dict_sample, [], whitelist_active=True)
+
+        # Even with empty whitelist, test mode still sends
+        assert len(sent_emails) > 0
+        assert sent_emails[0][1] == ['test@example.com']
+
 
 # ---------------------------------------------------------------------------
 # main

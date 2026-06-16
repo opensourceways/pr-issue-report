@@ -24,7 +24,7 @@
 | `smtp_host` | SMTP 服务器 |
 | `smtp_port` | 端口，默认 465 |
 | `email_sender` | 发件人地址 |
-| `test_reviever_email` | 测试模式：所有邮件重定向到此地址 |
+| `test_reviever_email` | 测试模式：重定向到该地址，仅发 3 封 PR + 3 封 Issue |
 
 ## 白名单
 
@@ -55,4 +55,4 @@ python3 issue_statistics.py
 - 维护者 + 仓库提交者：一封邮件，上下两个表分别展示
 - 纯维护者或纯提交者：一封邮件
 - Kernel SIG 跳过（由 hulk_robot_test 独立处理）
-- 测试阶段：设置 `test_reviever_email` 后所有邮件重定向到该地址
+- 测试阶段：设置 `test_reviever_email` 后精确发送 3 封 PR + 3 封 Issue 到该测试地址

@@ -58,6 +58,11 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
     :param whitelist_active: whether whitelist filtering is enabled
     """
     log.logger.info('=' * 25 + ' STATISTICS ' + '=' * 25)
+    test_email = os.getenv('test_reviever_email', '').strip()
+    test_mode = bool(test_email)
+    if test_mode:
+        log.logger.info('[TEST MODE] All emails will be sent to {}, max 3 emails'.format(test_email))
+    MAX_EMAILS = 3
     email_mappings = get_email_mappings()
     mapping_lists = sorted(list(email_mappings.keys()))
     maintainer_pr_dict = {}
@@ -170,7 +175,7 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
 
     def send_pr_email(pr_list, receiver, role, compare_dict):
         nonlocal email_sent_count
-        if role == 'maintainer' and whitelist_active and receiver not in whitelist:
+        if not test_mode and role == 'maintainer' and whitelist_active and receiver not in whitelist:
             log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
             return False
         if not pr_list:
@@ -196,7 +201,10 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
         return html_path
 
     for receiver in sorted(maintainer_pr_dict.keys()):
-        if whitelist_active and receiver not in whitelist:
+        if test_mode:
+            if email_sent_count >= MAX_EMAILS:
+                break
+        elif whitelist_active and receiver not in whitelist:
             log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
             continue
         html_m = send_pr_email(maintainer_pr_dict[receiver], receiver, 'maintainer', compare_dict)
@@ -216,20 +224,31 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
                                            '<h3 style="margin-top:30px">作为 Committer 的 PR</h3>' + body_c.split('<body>')[1].split('</body>')[0] + '</body>')
             with open(html_m, 'w', encoding='utf-8') as f:
                 f.write(body_combined)
-        send_email(html_m.replace('.html', '.xlsx'), receiver, [email_address],
+        actual_receivers = [test_email] if test_mode else [email_address]
+        send_email(html_m.replace('.html', '.xlsx'), receiver, actual_receivers,
                    'openEuler 待处理PR汇总')
         email_sent_count += 1
-        log.logger.info('Email {} of 3 sent'.format(email_sent_count))
+        if test_mode:
+            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+        else:
+            log.logger.info('Email {} sent to {}'.format(email_sent_count, email_address))
 
     for receiver in sorted(committer_pr_dict.keys()):
+        if test_mode:
+            if email_sent_count >= MAX_EMAILS:
+                break
         html_c = send_pr_email(committer_pr_dict[receiver], receiver, 'committer', compare_dict)
         if not html_c:
             continue
         email_address = email_mappings.get(receiver)
-        send_email(html_c.replace('.html', '.xlsx'), receiver, [email_address],
+        actual_receivers = [test_email] if test_mode else [email_address]
+        send_email(html_c.replace('.html', '.xlsx'), receiver, actual_receivers,
                    'openEuler 待处理PR汇总（Committer）')
         email_sent_count += 1
-        log.logger.info('Email {} of 3 sent'.format(email_sent_count))
+        if test_mode:
+            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+        else:
+            log.logger.info('Email {} sent to {}'.format(email_sent_count, email_address))
 
 
 # ---------------------------------------------------------------------------
