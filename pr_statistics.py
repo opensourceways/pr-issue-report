@@ -152,13 +152,16 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
             else:
                 committer_pr_dict[cid].append(pr_row)
 
-    # Move committer entries for maintainers into a separate dict,
+    # Move committer entries for whitelisted maintainers into a separate dict,
     # so they get one email with two tables instead of two emails.
+    # Non-whitelisted maintainers' committer entries stay in committer_pr_dict
+    # and are sent via the committer loop instead.
     committer_extras = {}
     for cid in list(committer_pr_dict.keys()):
         if cid in maintainer_pr_dict:
-            committer_extras[cid] = committer_pr_dict[cid]
-            del committer_pr_dict[cid]
+            if not whitelist_active or cid in whitelist:
+                committer_extras[cid] = committer_pr_dict[cid]
+                del committer_pr_dict[cid]
 
     email_sent_count = 0
 
