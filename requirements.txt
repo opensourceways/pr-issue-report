@@ -1,0 +1,5 @@
+requests
+openpyxl
+pandas
+PyYAML
+xlsx2html

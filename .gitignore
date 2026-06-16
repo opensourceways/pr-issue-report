@@ -1,0 +1,24 @@
+# Runtime directories
+community/
+data/
+
+# Runtime logs
+statistics.log
+statistics.log.*
+
+# Generated config
+email_mapping.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Coverage
+.coverage
+
+# Backups
+*.bak
