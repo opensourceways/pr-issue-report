@@ -14,10 +14,11 @@ import logging
 import openpyxl
 import os
 import re
+import shutil
 import pandas as pd
 import requests
 import smtplib
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 import yaml
@@ -67,15 +68,15 @@ def prepare_env():
     """
     log.logger.info('=' * 25 + ' PREPARE ENVIRONMENT ' + '=' * 25)
     if os.path.exists('community'):
-        subprocess.call('rm -rf community', shell=True)
-    subprocess.call('git clone https://gitcode.com/openeuler/community.git', shell=True)
+        shutil.rmtree('community')
+    subprocess.run(['git', 'clone', 'https://gitcode.com/openeuler/community.git'], check=True)  # nosec B603 B607
     if not os.path.exists('community'):
         log.logger.error('Fail to clone code, exit...')
         sys.exit(1)
     data_dir = 'data'
     if os.path.exists(data_dir):
-        subprocess.call('rm -rf {}'.format(data_dir), shell=True)
-    subprocess.call('mkdir data', shell=True)
+        shutil.rmtree(data_dir)
+    os.makedirs(data_dir, exist_ok=True)
     if not os.path.exists('data'):
         log.logger.error('Fail to make data directory, exit...')
         sys.exit(1)
@@ -134,11 +135,11 @@ def get_maintainers(sig):
     sig_info_file = os.path.join('community', 'sig', sig, 'sig-info.yaml')
     if os.path.exists(owners_file):
         with open(owners_file, 'r', encoding='utf-8') as f:
-            maintainers = yaml.load(f.read(), Loader=yaml.Loader)['maintainers']
+            maintainers = yaml.safe_load(f.read())['maintainers']
             return maintainers, False
     elif os.path.exists(sig_info_file):
         with open(sig_info_file, 'r', encoding='utf-8') as f:
-            sig_info = yaml.load(f.read(), Loader=yaml.Loader)
+            sig_info = yaml.safe_load(f.read())
             maintainers = [get_user_id(x) for x in sig_info['maintainers']]
             return maintainers, True
     else:
@@ -156,7 +157,7 @@ def get_committers_mapping(sig):
     if not os.path.exists(sig_info_file):
         return {}
     with open(sig_info_file, 'r', encoding='utf-8') as f:
-        sig_info = yaml.load(f.read(), Loader=yaml.Loader)
+        sig_info = yaml.safe_load(f.read())
     repositories = sig_info.get('repositories')
     if not repositories:
         return {}
@@ -198,7 +199,7 @@ def create_email_mappings():
     """
     email_mappings = {}
     if not os.path.exists('community'):
-        subprocess.call('git clone https://gitcode.com/openeuler/community.git', shell=True)
+        subprocess.run(['git', 'clone', 'https://gitcode.com/openeuler/community.git'], check=True)  # nosec B603 B607
     sig_path = os.path.join('community', 'sig')
     for i in sorted(os.listdir(sig_path)):
         if i in ['README.md', 'sig-template', 'sig-recycle', 'create_sig_info_template.py']:
@@ -499,7 +500,7 @@ def clean_env(data_dir):
     Remove the temporary data
     :param data_dir: directory waiting to clean
     """
-    subprocess.call('rm -rf {}'.format(data_dir), shell=True)
+    shutil.rmtree(data_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +520,7 @@ def cal_sig_processed_rate(sig_name, ts):
         'timestamp': ts,
         'sig': sig_name
     }
-    r = requests.get(url, params=params)
+    r = requests.get(url, params=params, timeout=30)
     if r.status_code != 200:
         processed_rate = -1
     else:

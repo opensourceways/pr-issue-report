@@ -32,7 +32,7 @@ class TestGetReposIssuesMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = mock_data
-        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params, timeout: mock_resp)
 
         result = get_repos_issues_mapping()
         assert 'openeuler/ai-framework/issues/200' in result
@@ -49,7 +49,7 @@ class TestGetReposIssuesMapping:
                            'title': 'I300'}]}
 
         responses = iter([page1, page2])
-        def mock_get(url, params):
+        def mock_get(url, params, timeout):
             resp = MagicMock()
             resp.status_code = 200
             resp.json.return_value = next(responses)
@@ -63,7 +63,7 @@ class TestGetReposIssuesMapping:
         """Non-200 status returns None."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params, timeout: mock_resp)
         assert get_repos_issues_mapping() is None
 
     def test_empty_result(self, monkeypatch):
@@ -71,7 +71,7 @@ class TestGetReposIssuesMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {'data': []}
-        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params, timeout: mock_resp)
         assert get_repos_issues_mapping() == {}
 
     def test_link_splitting(self, monkeypatch):
@@ -87,7 +87,7 @@ class TestGetReposIssuesMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = mock_data
-        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('issue_statistics.requests.get', lambda url, params, timeout: mock_resp)
         result = get_repos_issues_mapping()
         assert 'src-openeuler/tools/issues/500' in result
 

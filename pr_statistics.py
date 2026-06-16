@@ -32,7 +32,7 @@ def get_repos_pulls_mapping():
             'page': page,
             'per_page': 100
         }
-        r = requests.get(url, params=params)
+        r = requests.get(url, params=params, timeout=30)
         if r.status_code != 200:
             log.logger.error('Fail to get enterprise pulls list.')
             return

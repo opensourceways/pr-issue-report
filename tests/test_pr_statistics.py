@@ -29,7 +29,7 @@ class TestGetReposPullsMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = mock_data
-        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params, timeout: mock_resp)
 
         result = get_repos_pulls_mapping()
         assert 'openeuler/ai-framework/pulls/100' in result
@@ -43,7 +43,7 @@ class TestGetReposPullsMapping:
                                 'title': 'PR 200'}]}
 
         responses = iter([page1_data, page2_data])
-        def mock_get(url, params):
+        def mock_get(url, params, timeout):
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = next(responses)
@@ -58,7 +58,7 @@ class TestGetReposPullsMapping:
         """When API returns non-200, return None."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params, timeout: mock_resp)
         result = get_repos_pulls_mapping()
         assert result is None
 
@@ -67,7 +67,7 @@ class TestGetReposPullsMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {'data': []}
-        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params, timeout: mock_resp)
         result = get_repos_pulls_mapping()
         assert result == {}
 
@@ -81,7 +81,7 @@ class TestGetReposPullsMapping:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = mock_data
-        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('pr_statistics.requests.get', lambda url, params, timeout: mock_resp)
         result = get_repos_pulls_mapping()
         assert 'openeuler/repo/pulls/42' in result
 

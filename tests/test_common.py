@@ -269,7 +269,7 @@ class TestCalSigProcessedRate:
         """When API returns non-200, return -1."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        monkeypatch.setattr('common.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('common.requests.get', lambda url, params, timeout: mock_resp)
         assert cal_sig_processed_rate('sig-ai', 1234567890000) == -1
 
     def test_empty_data(self, monkeypatch):
@@ -277,7 +277,7 @@ class TestCalSigProcessedRate:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {'data': None}
-        monkeypatch.setattr('common.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('common.requests.get', lambda url, params, timeout: mock_resp)
         assert cal_sig_processed_rate('sig-ai', 1234567890000) == -1
 
     def test_all_zero(self, monkeypatch):
@@ -287,7 +287,7 @@ class TestCalSigProcessedRate:
         mock_resp.json.return_value = {
             'data': {'merged': 0, 'closed': 0, 'open': 0}
         }
-        monkeypatch.setattr('common.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('common.requests.get', lambda url, params, timeout: mock_resp)
         assert cal_sig_processed_rate('sig-ai', 1234567890000) == 0
 
     def test_normal_calculation(self, monkeypatch):
@@ -297,7 +297,7 @@ class TestCalSigProcessedRate:
         mock_resp.json.return_value = {
             'data': {'merged': 70, 'closed': 5, 'open': 25}
         }
-        monkeypatch.setattr('common.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('common.requests.get', lambda url, params, timeout: mock_resp)
         result = cal_sig_processed_rate('sig-ai', 1234567890000)
         assert result == 0.75
 
@@ -308,7 +308,7 @@ class TestCalSigProcessedRate:
         mock_resp.json.return_value = {
             'data': {'merged': 100, 'closed': 0, 'open': 0}
         }
-        monkeypatch.setattr('common.requests.get', lambda url, params: mock_resp)
+        monkeypatch.setattr('common.requests.get', lambda url, params, timeout: mock_resp)
         assert cal_sig_processed_rate('sig-ai', 1234567890000) == 1.0
 
 
@@ -319,46 +319,20 @@ class TestCalSigProcessedRate:
 class TestPrepareEnv:
     def test_success(self, monkeypatch, tmp_path):
         """prepare_env clones community repo and creates data dir."""
-        # Mock subprocess.call to avoid actual git clone
-        calls = []
-        def fake_call(cmd, shell=False):
-            calls.append(cmd)
-            return 0
-        monkeypatch.setattr('common.subprocess.call', fake_call)
-
-        # Mock os.path.exists: community doesn't exist first, then exists
-        exists_results = [False, True, False, True]  # community(false), data(false→true)
-        monkeypatch.setattr('common.os.path.exists', lambda p: {
-            'community': False,
-            'data': False,
-        }.get(p, False))
-
-        # Actually for prepare_env to work, after git clone community must exist
-        exists_vals = iter([False, True, False, True])  # community→data checks
-        def fake_exists(path):
-            if path == 'community':
-                return False  # triggers rm -rf skip, then git clone
-            if path == 'data':
-                return False  # triggers mkdir
-            return False
-        # Need more careful mock — community must "appear" after clone
-        community_exists = [False, True]
-        data_exists = [False, True]
-        monkeypatch.setattr('common.os.path.exists',
-                            lambda p: {'community': community_exists[0] if 'community' in p else True,
-                                       'data': False}[p] if p in ('community', 'data') else False)
-
-        # Simpler approach: fully mock
         path_state = {'community': False, 'data': False}
         def fake_exists(path):
             return path_state.get(path, False)
-        def fake_call(cmd, shell=False):
-            if 'git clone' in cmd:
+        def fake_rmtree(path):
+            path_state[path] = False
+        def fake_run(cmd, check=False, **kw):
+            if 'git' in cmd and 'clone' in cmd:
                 path_state['community'] = True
-            elif 'mkdir data' in cmd or 'mkdir' in str(cmd):
-                path_state['data'] = True
-            return 0
-        monkeypatch.setattr('common.subprocess.call', fake_call)
+        def fake_makedirs(path, exist_ok=False):
+            path_state['data'] = True
+
+        monkeypatch.setattr('common.shutil.rmtree', fake_rmtree)
+        monkeypatch.setattr('common.subprocess.run', fake_run)
+        monkeypatch.setattr('common.os.makedirs', fake_makedirs)
         monkeypatch.setattr('common.os.path.exists', fake_exists)
 
         result = prepare_env()
@@ -366,7 +340,9 @@ class TestPrepareEnv:
 
     def test_clone_failure(self, monkeypatch):
         """When git clone fails, sys.exit(1)."""
-        monkeypatch.setattr('common.subprocess.call', lambda *a, **kw: 0)
+        monkeypatch.setattr('common.shutil.rmtree', lambda p: None)
+        monkeypatch.setattr('common.subprocess.run', lambda cmd, check=False, **kw: None)
+        monkeypatch.setattr('common.os.makedirs', lambda p, exist_ok=False: None)
         monkeypatch.setattr('common.os.path.exists', lambda p: False)
         with pytest.raises(SystemExit) as exc_info:
             prepare_env()
@@ -377,12 +353,12 @@ class TestPrepareEnv:
         path_state = {'community': True, 'data': False}
         def fake_exists(path):
             return path_state.get(path, False)
-        def fake_call(cmd, shell=False):
-            if 'git clone' in cmd:
+        def fake_run(cmd, check=False, **kw):
+            if 'git' in cmd and 'clone' in cmd:
                 path_state['community'] = True
-            # mkdir fails silently
-            return 0
-        monkeypatch.setattr('common.subprocess.call', fake_call)
+        monkeypatch.setattr('common.shutil.rmtree', lambda p: None)
+        monkeypatch.setattr('common.subprocess.run', fake_run)
+        monkeypatch.setattr('common.os.makedirs', lambda p, exist_ok=False: None)
         monkeypatch.setattr('common.os.path.exists', fake_exists)
         with pytest.raises(SystemExit) as exc_info:
             prepare_env()
@@ -394,11 +370,11 @@ class TestPrepareEnv:
 # ---------------------------------------------------------------------------
 
 class TestCleanEnv:
-    def test_calls_rm(self, monkeypatch):
+    def test_calls_rmtree(self, monkeypatch):
         calls = []
-        monkeypatch.setattr('common.subprocess.call', lambda cmd, shell: calls.append(cmd))
+        monkeypatch.setattr('common.shutil.rmtree', lambda path, ignore_errors=False: calls.append(path))
         clean_env('data')
-        assert any('rm -rf' in c and 'data' in c for c in calls)
+        assert 'data' in calls
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +536,7 @@ class TestGetMaintainers:
         m = mock_open(read_data='')
         with patch('builtins.open', m):
             with patch('common.os.path.exists', lambda p: 'OWNERS' in p):
-                with patch('common.yaml.load', return_value=mock_yaml):
+                with patch('common.yaml.safe_load', return_value=mock_yaml):
                     maintainers, mark = get_maintainers('sig-test')
                     assert maintainers == ['m1', 'm2']
                     assert mark is False
@@ -577,7 +553,7 @@ class TestGetMaintainers:
         with patch('builtins.open', m):
             # OWNERS doesn't exist, sig-info.yaml does
             with patch('common.os.path.exists', lambda p: 'sig-info' in p):
-                with patch('common.yaml.load', return_value=sig_info):
+                with patch('common.yaml.safe_load', return_value=sig_info):
                     maintainers, mark = get_maintainers('sig-test')
                     assert maintainers == ['m1', 'm2']
                     assert mark is True
@@ -599,7 +575,7 @@ class TestGetMaintainers:
         m = mock_open(read_data='')
         with patch('builtins.open', m):
             with patch('common.os.path.exists', lambda p: 'sig-info' in p):
-                with patch('common.yaml.load', return_value=sig_info):
+                with patch('common.yaml.safe_load', return_value=sig_info):
                     maintainers, _ = get_maintainers('sig-test')
                     assert maintainers == ['m3']
 
@@ -619,7 +595,7 @@ class TestGetCommittersMapping:
         m = mock_open(read_data='')
         with patch('builtins.open', m):
             with patch('common.os.path.exists', return_value=True):
-                with patch('common.yaml.load', return_value={'maintainers': []}):
+                with patch('common.yaml.safe_load', return_value={'maintainers': []}):
                     assert get_committers_mapping('sig-test') == {}
 
     def test_repos_without_committers(self):
@@ -632,7 +608,7 @@ class TestGetCommittersMapping:
         m = mock_open(read_data='')
         with patch('builtins.open', m):
             with patch('common.os.path.exists', return_value=True):
-                with patch('common.yaml.load', return_value=sig_info):
+                with patch('common.yaml.safe_load', return_value=sig_info):
                     assert get_committers_mapping('sig-test') == {}
 
     def test_repos_with_committers(self):
@@ -651,7 +627,7 @@ class TestGetCommittersMapping:
         m = mock_open(read_data='')
         with patch('builtins.open', m):
             with patch('common.os.path.exists', return_value=True):
-                with patch('common.yaml.load', return_value=sig_info):
+                with patch('common.yaml.safe_load', return_value=sig_info):
                     result = get_committers_mapping('sig-test')
                     assert 'openeuler/repo1' in result
                     assert 'src-openeuler/repo1' in result
@@ -691,7 +667,7 @@ class TestCreateEmailMappings:
                     with patch('common.os.walk', return_value=[]):
                         with patch('common.yaml.safe_load', return_value=sig_info):
                             with patch('common.yaml.dump'):
-                                with patch('common.subprocess.call', return_value=0):
+                                with patch('common.subprocess.run', return_value=0):
                                     create_email_mappings()
 
     def test_null_email_filtered(self):
@@ -714,7 +690,7 @@ class TestCreateEmailMappings:
                     with patch('common.os.walk', return_value=[]):
                         with patch('common.yaml.safe_load', return_value=sig_info):
                             with patch('common.yaml.dump'):
-                                with patch('common.subprocess.call', return_value=0):
+                                with patch('common.subprocess.run', return_value=0):
                                     create_email_mappings()
 
 

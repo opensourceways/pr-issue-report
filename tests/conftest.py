@@ -129,13 +129,13 @@ def clean_test_env(monkeypatch):
 def set_smtp_env(monkeypatch):
     """Set SMTP environment variables for email tests."""
     monkeypatch.setenv('email_username', 'test_user')
-    monkeypatch.setenv('email_password', 'test_pass')
+    monkeypatch.setenv('email_password', 'test_pass')  # nosec B105
     monkeypatch.setenv('smtp_host', 'smtp.example.com')
     monkeypatch.setenv('smtp_port', '465')
     monkeypatch.setenv('email_sender', 'sender@example.com')
     return {
         'username': 'test_user',
-        'password': 'test_pass',
+        'password': 'test_pass',  # nosec B105
         'host': 'smtp.example.com',
         'port': '465',
         'sender': 'sender@example.com',
