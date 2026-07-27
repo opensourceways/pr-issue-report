@@ -22,6 +22,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import yaml
+from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from logging import handlers
@@ -262,6 +263,137 @@ def get_email_mappings():
 
 
 # ---------------------------------------------------------------------------
+# Email controls (unsubscribe / preference management)
+# ---------------------------------------------------------------------------
+
+def expand_controls(config):
+    """
+    Expand simplified control syntax into full nested structure.
+    :param config: raw control config for a single user (dict, bool or None)
+    :return: dict with keys 'pr' and 'issue', each containing 'maintainer' and 'committer'
+    """
+    result = {
+        'pr': {'maintainer': True, 'committer': True},
+        'issue': {'maintainer': True, 'committer': True},
+    }
+    if config is False or config is None:
+        return result
+    if isinstance(config, dict) and config.get('all') is False:
+        result['pr']['maintainer'] = False
+        result['pr']['committer'] = False
+        result['issue']['maintainer'] = False
+        result['issue']['committer'] = False
+        return result
+    if not isinstance(config, dict):
+        return result
+    for mail_type in ('pr', 'issue'):
+        if mail_type not in config:
+            continue
+        value = config[mail_type]
+        if value is False:
+            result[mail_type]['maintainer'] = False
+            result[mail_type]['committer'] = False
+        elif isinstance(value, dict):
+            for role in ('maintainer', 'committer'):
+                if role in value:
+                    result[mail_type][role] = bool(value[role])
+    return result
+
+
+def load_email_controls(path=None):
+    """
+    Load email control preferences from email_controls.yaml.
+    :param path: optional path to control file, defaults to EMAIL_CONTROLS_PATH env var or 'email_controls.yaml'
+    :return: nested dict controls[gitee_id][mail_type][role] = bool
+    """
+    if path is None:
+        path = os.getenv('EMAIL_CONTROLS_PATH', 'email_controls.yaml')
+    controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
+    if not os.path.exists(path):
+        log.logger.info('Email controls file {} not found, all users will receive all emails'.format(path))
+        return controls
+    try:
+        raw = yaml.safe_load(open(path, 'r', encoding='utf-8').read()) or {}
+    except Exception as e:
+        log.logger.error('Failed to parse email controls file {}: {}'.format(path, e))
+        return controls
+    for gitee_id, config in raw.items():
+        controls[gitee_id] = expand_controls(config)
+    log.logger.info('Loaded email controls from {}'.format(path))
+    return controls
+
+
+def should_send(controls, gitee_id, mail_type, role):
+    """
+    Check whether a user should receive a specific part of emails.
+    :param controls: controls dict from load_email_controls()
+    :param gitee_id: user gitee_id
+    :param mail_type: 'pr' or 'issue'
+    :param role: 'maintainer' or 'committer'
+    :return: bool
+    """
+    return controls[gitee_id][mail_type][role]
+
+
+def merge_html_parts(parts, mail_type):
+    """
+    Merge multiple HTML report parts into one HTML document.
+    :param parts: list of tuples (title, html_path)
+    :param mail_type: 'pr' or 'issue'
+    :return: merged HTML string, or None if no valid parts
+    """
+    if not parts:
+        return None
+    bodies = []
+    for title, html_path in parts:
+        try:
+            with open(html_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except (IOError, OSError) as e:
+            log.logger.warning('Failed to read HTML part {}: {}'.format(html_path, e))
+            continue
+        body_match = re.search(r'<body[^>]*>(.*?)</body>', content, re.DOTALL | re.IGNORECASE)
+        body = body_match.group(1) if body_match else content
+        bodies.append((title, body))
+    if not bodies:
+        return None
+    if len(bodies) == 1:
+        merged_body = bodies[0][1]
+    else:
+        merged_body = ''
+        for title, body in bodies:
+            merged_body += '<h3 style="margin-top:30px">{}</h3>\n{}'.format(title, body)
+    unsubscribe_note = (
+        '<p style="font-size:12px;color:#666;">'
+        '如需退订，请直接回复本邮件，或发送邮件至 '
+        '<b>huanglei227@h-partners.com</b>，并注明退订类型：<br>'
+        '• 退订 PR 汇总<br>'
+        '• 退订 Issue 汇总<br>'
+        '• 只退订作为 Maintainer 的部分<br>'
+        '• 只退订作为 Committer 的部分<br>'
+        '• 完全退订所有邮件<br><br>'
+        '管理员将在 1-2 个工作日内处理。'
+        '</p>'
+    )
+    merged_body += unsubscribe_note
+    return '<html><body>{}</body></html>'.format(merged_body)
+
+
+def write_dry_run_html(mail_type, gitee_id, html_content):
+    """
+    Write generated HTML to local test_output directory when DRY_RUN is enabled.
+    :param mail_type: 'pr' or 'issue'
+    :param gitee_id: user gitee_id
+    :param html_content: HTML string to write
+    """
+    os.makedirs('test_output', exist_ok=True)
+    output_path = os.path.join('test_output', '{}_{}.html'.format(mail_type, gitee_id))
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    log.logger.info('[DRY RUN] Generated {}'.format(output_path))
+
+
+# ---------------------------------------------------------------------------
 # Time helpers
 # ---------------------------------------------------------------------------
 
@@ -430,7 +562,8 @@ def excel_optimization(filepath, compare_dict, is_issue=False):
 # ---------------------------------------------------------------------------
 
 def send_email(xlsx_file, nickname, receivers, subject='openEuler 待处理PR汇总',
-               body_text='以下是您参与openEuler社区的SIG仓库下待处理的PR，烦请您及时跟进'):
+               body_text='以下是您参与openEuler社区的SIG仓库下待处理的PR，烦请您及时跟进',
+               html_content=None):
     """
     Send email to reviewers
     :param xlsx_file: path of the xlsx file
@@ -438,16 +571,21 @@ def send_email(xlsx_file, nickname, receivers, subject='openEuler 待处理PR汇
     :param receivers: where send to
     :param subject: email subject
     :param body_text: greeting text in email body
+    :param html_content: optional HTML string; if provided, use it instead of reading from xlsx
     """
     username = os.getenv('email_username', '').strip()
     port = int(os.getenv('smtp_port', '465').strip())
     host = os.getenv('smtp_host', '').strip()
     password = os.getenv('email_password', '').strip()
     sender = os.getenv('email_sender', '').strip()
+    reply_to = os.getenv('email_reply_to', 'huanglei227@h-partners.com').strip()
     msg = MIMEMultipart()
-    html_file = xlsx_file.replace('.xlsx', '.html')
-    with open(html_file, 'r', encoding='utf-8') as f:
-        body_of_email = f.read()
+    if html_content is not None:
+        body_of_email = html_content
+    else:
+        html_file = xlsx_file.replace('.xlsx', '.html')
+        with open(html_file, 'r', encoding='utf-8') as f:
+            body_of_email = f.read()
     body_of_email = body_of_email.replace('<body>', '<body><p>Dear {},</p>'
                                                     '<p>{}</p>'.
                                           format(nickname, body_text))
@@ -458,6 +596,7 @@ def send_email(xlsx_file, nickname, receivers, subject='openEuler 待处理PR汇
     msg['Subject'] = subject
     msg['From'] = sender
     msg['To'] = ','.join(receivers)
+    msg['Reply-To'] = reply_to
     try:
         if port == 465:
             with smtplib.SMTP_SSL(host, port, timeout=120) as server:

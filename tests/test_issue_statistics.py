@@ -130,23 +130,23 @@ class TestIssueStatistics:
                             lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
 
         issue_statistics(str(tmp_path), sigs_sample, repos_issues_mapping_sample,
-                         compare_dict_sample, [], whitelist_active=False)
+                         compare_dict_sample)
 
         assert len(sent_emails) > 0
         assert 'maintainer1' in [e[0] for e in sent_emails]
         # Subject should contain "Issue"
         assert any('Issue' in e[2] for e in sent_emails)
 
-    def test_whitelist_filters_issue_maintainers(self, tmp_path, monkeypatch,
-                                                   sigs_sample, repos_issues_mapping_sample,
-                                                   compare_dict_sample):
-        """Issue: both maintainer AND committer emails respect whitelist."""
+    def test_controls_filter_issue_maintainer_part(self, tmp_path, monkeypatch,
+                                                    sigs_sample, repos_issues_mapping_sample,
+                                                    compare_dict_sample):
+        """When controls disable maintainer part, that part is skipped."""
         monkeypatch.setattr('issue_statistics.get_email_mappings',
-                            lambda: {'m1': 'm1@e.com', 'm2': 'm2@e.com', 'c1': 'c1@e.com'})
+                            lambda: {'m1': 'm1@e.com'})
         monkeypatch.setattr('issue_statistics.get_maintainers',
-                            lambda sig: (['m1', 'm2'], True))
+                            lambda sig: (['m1'], True))
         monkeypatch.setattr('issue_statistics.get_committers_mapping',
-                            lambda sig: {'openeuler/ai-framework': ['c1']})
+                            lambda sig: {})
 
         monkeypatch.setattr('issue_statistics.csv_to_xlsx',
                             lambda c: c.replace('.csv', '.xlsx'))
@@ -156,15 +156,19 @@ class TestIssueStatistics:
         monkeypatch.setattr('issue_statistics.send_email',
                             lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
 
-        # Whitelist only m1 — both m2 and c1 should be filtered
+        controls = {
+            'm1': {
+                'pr': {'maintainer': True, 'committer': True},
+                'issue': {'maintainer': False, 'committer': True},
+            }
+        }
+        monkeypatch.setattr('issue_statistics.load_email_controls', lambda: controls)
+
         issue_statistics(str(tmp_path), sigs_sample, repos_issues_mapping_sample,
-                         compare_dict_sample, ['m1'], whitelist_active=True)
+                         compare_dict_sample)
 
         names = [e[0] for e in sent_emails]
-        assert 'm1' in names
-        assert 'm2' not in names
-        # Committer c1 is also filtered by whitelist for issues
-        assert 'c1' not in names
+        assert 'm1' not in names
 
     def test_status_merging(self, tmp_path, monkeypatch,
                             sigs_sample, compare_dict_sample):
@@ -193,7 +197,7 @@ class TestIssueStatistics:
                             lambda x, n, r, s, **kw: sent_emails.append(n))
 
         issue_statistics(str(tmp_path), sigs_sample, issues,
-                         compare_dict_sample, [], whitelist_active=False)
+                         compare_dict_sample)
         assert len(sent_emails) > 0
 
     def test_skip_kernel_sig(self, tmp_path, monkeypatch, compare_dict_sample):
@@ -215,12 +219,12 @@ class TestIssueStatistics:
         issues = {'openeuler/kernel/main': self._make_issue_item(
             'https://gitcode.com/openeuler/kernel/issues/1')}
         issue_statistics(str(tmp_path), kernel_sigs, issues,
-                         compare_dict_sample, [], whitelist_active=False)
+                         compare_dict_sample)
         assert len(sent_emails) == 0
 
-    def test_maintainer_committer_merge(self, tmp_path, monkeypatch,
-                                         repos_issues_mapping_sample, compare_dict_sample):
-        """Maintainer who is also a committer gets one merged email."""
+    def test_maintainer_committer_one_email_two_parts(self, tmp_path, monkeypatch,
+                                                       repos_issues_mapping_sample, compare_dict_sample):
+        """Maintainer who is also a committer gets one email with two parts."""
         sigs = [{'name': 'sig-ai',
                  'repositories': [
                      'openeuler/ai-framework',
@@ -240,7 +244,6 @@ class TestIssueStatistics:
         monkeypatch.setattr('issue_statistics.csv_to_xlsx', fake_csv)
 
         def fake_excel(xlsx_path, compare_dict, is_issue=True):
-            # Create the HTML file so the merge logic can read it
             html_path = xlsx_path.replace('.xlsx', '.html')
             with open(html_path, 'w', encoding='utf-8') as f:
                 f.write('<html><body><table>Issue Table</table></body></html>')
@@ -248,20 +251,22 @@ class TestIssueStatistics:
         monkeypatch.setattr('issue_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('issue_statistics.send_email',
-                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s, kw.get('html_content', ''))))
 
         issue_statistics(str(tmp_path), sigs, repos_issues_mapping_sample,
-                         compare_dict_sample, [], whitelist_active=False)
-        # m1 should receive exactly 1 email (merged), not 2
+                         compare_dict_sample)
+        # m1 should receive exactly 1 email
         m1_emails = [e for e in sent_emails if e[0] == 'm1']
         assert len(m1_emails) == 1
-        # The merged email subject should NOT have "Committer" (it's the merged one)
         assert 'Committer' not in m1_emails[0][2]
+        html = m1_emails[0][3]
+        assert '作为 Maintainer 的 Issue' in html
+        assert '作为 Committer 的 Issue' in html
 
-    def test_pure_committer_gets_committer_subject(self, tmp_path, monkeypatch,
-                                                     repos_issues_mapping_sample,
-                                                     compare_dict_sample):
-        """A pure committer (not maintainer) gets 'Committer' subject."""
+    def test_pure_committer_gets_one_email(self, tmp_path, monkeypatch,
+                                           repos_issues_mapping_sample,
+                                           compare_dict_sample):
+        """A pure committer gets one email with only committer part."""
         sigs = [{'name': 'sig-ai',
                  'repositories': ['openeuler/ai-framework']}]
         monkeypatch.setattr('issue_statistics.get_email_mappings',
@@ -271,20 +276,30 @@ class TestIssueStatistics:
         monkeypatch.setattr('issue_statistics.get_committers_mapping',
                             lambda sig: {'openeuler/ai-framework': ['c1']})
 
-        monkeypatch.setattr('issue_statistics.csv_to_xlsx',
-                            lambda c: c.replace('.csv', '.xlsx'))
-        monkeypatch.setattr('issue_statistics.excel_optimization',
-                            lambda x, c, is_issue=True: None)
+        def fake_csv(csv_path):
+            return csv_path.replace('.csv', '.xlsx')
+
+        def fake_excel(xlsx_path, compare_dict, is_issue=True):
+            html_path = xlsx_path.replace('.xlsx', '.html')
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write('<html><body><table>Issue Table</table></body></html>')
+
+        monkeypatch.setattr('issue_statistics.csv_to_xlsx', fake_csv)
+        monkeypatch.setattr('issue_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('issue_statistics.send_email',
-                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s, kw.get('html_content', ''))))
 
         issue_statistics(str(tmp_path), sigs, repos_issues_mapping_sample,
-                         compare_dict_sample, [], whitelist_active=False)
+                         compare_dict_sample)
 
         c1_emails = [e for e in sent_emails if e[0] == 'c1']
         assert len(c1_emails) == 1
-        assert 'Committer' in c1_emails[0][2]
+        assert 'Committer' not in c1_emails[0][2]
+        html = c1_emails[0][3]
+        # Single part: no role title, but should not contain maintainer title either
+        assert '作为 Maintainer 的 Issue' not in html
+        assert 'Issue Table' in html
 
     def test_test_mode_limits_3_emails(self, tmp_path, monkeypatch,
                                         sigs_sample, repos_issues_mapping_sample,
@@ -322,38 +337,44 @@ class TestIssueStatistics:
             }
 
         issue_statistics(str(tmp_path), sigs_sample, issues,
-                         compare_dict_sample, [], whitelist_active=False)
+                         compare_dict_sample)
 
         assert len(sent_emails) == 3
         for _, receivers, _ in sent_emails:
             assert receivers == ['test@example.com']
 
-    def test_test_mode_skips_whitelist(self, tmp_path, monkeypatch,
-                                        sigs_sample, repos_issues_mapping_sample,
-                                        compare_dict_sample):
-        """In test mode, issue whitelist filtering is skipped."""
-        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+    def test_dry_run_generates_local_html(self, tmp_path, monkeypatch,
+                                          sigs_sample, repos_issues_mapping_sample,
+                                          compare_dict_sample):
+        """DRY_RUN generates local HTML files without sending emails."""
+        monkeypatch.setenv('DRY_RUN', 'true')
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / 'data').mkdir()
         monkeypatch.setattr('issue_statistics.get_email_mappings',
                             lambda: {'m1': 'm1@e.com'})
         monkeypatch.setattr('issue_statistics.get_maintainers',
                             lambda sig: (['m1'], True))
         monkeypatch.setattr('issue_statistics.get_committers_mapping', lambda sig: {})
 
-        monkeypatch.setattr('issue_statistics.csv_to_xlsx',
-                            lambda c: c.replace('.csv', '.xlsx'))
+        def fake_csv(csv_path):
+            return csv_path.replace('.csv', '.xlsx')
+
+        def fake_excel(xlsx_path, compare_dict, is_issue=True):
+            html_path = xlsx_path.replace('.xlsx', '.html')
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write('<html><body><table>Issue Table</table></body></html>')
+
+        monkeypatch.setattr('issue_statistics.csv_to_xlsx', fake_csv)
+        monkeypatch.setattr('issue_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('issue_statistics.send_email',
-                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
-        monkeypatch.setattr('issue_statistics.excel_optimization',
-                            lambda x, c, is_issue=True: None)
+                            lambda x, n, r, s, **kw: sent_emails.append(n))
 
-        # Pass empty whitelist — in prod mode this would block
-        issue_statistics(str(tmp_path), sigs_sample, repos_issues_mapping_sample,
-                         compare_dict_sample, [], whitelist_active=True)
+        issue_statistics(str(tmp_path / 'data'), sigs_sample, repos_issues_mapping_sample,
+                         compare_dict_sample)
 
-        # Even with empty whitelist, test mode still sends
-        assert len(sent_emails) > 0
-        assert sent_emails[0][1] == ['test@example.com']
+        assert len(sent_emails) == 0
+        assert (tmp_path / 'test_output' / 'issue_m1.html').exists()
 
 
 # ---------------------------------------------------------------------------

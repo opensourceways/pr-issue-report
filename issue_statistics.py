@@ -48,23 +48,28 @@ def get_repos_issues_mapping():
 # Issue statistics
 # ---------------------------------------------------------------------------
 
-def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whitelist, whitelist_active=False):
+def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict):
     """
     :param data_dir: directory to store temporary data
     :param sigs: a dict of every sig and its repositories
     :param repos_issues_mapping: mappings between repos and issues
     :param compare_dict: a dict of every sig and its compare info
-    :param whitelist: a list of gitee_ids allowed to receive emails
-    :param whitelist_active: whether whitelist filtering is enabled
     """
     log.logger.info('=' * 25 + ' ISSUE STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
     test_mode = bool(test_email)
+    dry_run = os.getenv('DRY_RUN', '').strip().lower() == 'true'
+    test_user = os.getenv('TEST_USER', '').strip()
     if test_mode:
         log.logger.info('[TEST MODE] All issue emails will be sent to {}, max 3 emails'.format(test_email))
+    if dry_run:
+        log.logger.info('[DRY RUN] Issue emails will be generated locally in test_output/, not sent')
+    if test_user:
+        log.logger.info('[TEST USER] Only processing user: {}'.format(test_user))
     MAX_EMAILS = 3
     email_mappings = get_email_mappings()
     mapping_lists = sorted(list(email_mappings.keys()))
+    controls = load_email_controls()
     maintainer_issue_dict = {}
     committer_issue_dict = {}
     open_issue_info = []
@@ -147,12 +152,6 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
             else:
                 committer_issue_dict[cid].append(issue_row)
 
-    committer_extras = {}
-    for cid in list(committer_issue_dict.keys()):
-        if cid in maintainer_issue_dict:
-            committer_extras[cid] = committer_issue_dict[cid]
-            del committer_issue_dict[cid]
-
     email_sent_count = 0
 
     def write_csv_and_html(issue_list, csv_path, compare_dict):
@@ -165,16 +164,13 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
         excel_optimization(xlsx_path, compare_dict, is_issue=True)
         return xlsx_path.replace('.xlsx', '.html')
 
-    def send_issue_email(issue_list, receiver, role, compare_dict):
-        nonlocal email_sent_count
-        if not test_mode and whitelist_active and receiver not in whitelist:
-            log.logger.info('Receiver {} not in whitelist, skipping issue email'.format(receiver))
-            return False
+    def generate_issue_html(issue_list, receiver, role, compare_dict):
+        """Generate HTML report for a user and role, return HTML file path or False"""
         if not issue_list:
             return False
         email_address = email_mappings.get(receiver)
         if not email_address:
-            log.logger.warning('Ready to send {} issue stats for {} but cannot find email'.format(role, receiver))
+            log.logger.warning('Ready to generate {} issue stats for {} but cannot find email'.format(role, receiver))
             return False
         ordered = sorted(issue_list, key=(lambda x: int(x[5]) if x[5] else 0), reverse=True)
         ordered_issue_list = []
@@ -189,53 +185,45 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whiteli
                         ordered_issue_list.append(op)
         csv_path = '{}/issue_statistics_{}_{}.csv'.format(data_dir, receiver, role)
         html_path = write_csv_and_html(ordered_issue_list, csv_path, compare_dict)
-        log.logger.info('Ready to send {} issue stats for {}: {}'.format(role, receiver, email_address))
+        log.logger.info('Ready to generate {} issue stats for {}: {}'.format(role, receiver, email_address))
         return html_path
 
-    for receiver in sorted(maintainer_issue_dict.keys()):
-        if test_mode:
-            if email_sent_count >= MAX_EMAILS:
-                break
-        elif whitelist_active and receiver not in whitelist:
-            log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
+    all_receivers = set(maintainer_issue_dict.keys()) | set(committer_issue_dict.keys())
+    for receiver in sorted(all_receivers):
+        if test_user and receiver != test_user:
             continue
-        html_m = send_issue_email(maintainer_issue_dict[receiver], receiver, 'maintainer', compare_dict)
-        if not html_m:
+        if test_mode and email_sent_count >= MAX_EMAILS:
+            break
+        want_maintainer = receiver in maintainer_issue_dict and should_send(controls, receiver, 'issue', 'maintainer')
+        want_committer = receiver in committer_issue_dict and should_send(controls, receiver, 'issue', 'committer')
+        if not want_maintainer and not want_committer:
+            log.logger.info('Skipping Issue email for {} due to controls'.format(receiver))
             continue
         email_address = email_mappings.get(receiver)
-        extra_list = committer_extras.get(receiver, [])
-        html_c = send_issue_email(extra_list, receiver, 'committer', compare_dict)
-        if html_c:
-            with open(html_m, 'r', encoding='utf-8') as f:
-                body_m = f.read()
-            with open(html_c, 'r', encoding='utf-8') as f:
-                body_c = f.read()
-            body_combined = body_m.replace('</body>',
-                                           '<h3 style="margin-top:30px">作为 Committer 的 Issue</h3>' + body_c.split('<body>')[1].split('</body>')[0] + '</body>')
-            with open(html_m, 'w', encoding='utf-8') as f:
-                f.write(body_combined)
+        if not email_address:
+            log.logger.warning('Cannot find email address for {}, skipping'.format(receiver))
+            continue
+        html_parts = []
+        if want_maintainer:
+            html_m = generate_issue_html(maintainer_issue_dict[receiver], receiver, 'maintainer', compare_dict)
+            if html_m:
+                html_parts.append(('作为 Maintainer 的 Issue', html_m))
+        if want_committer:
+            html_c = generate_issue_html(committer_issue_dict[receiver], receiver, 'committer', compare_dict)
+            if html_c:
+                html_parts.append(('作为 Committer 的 Issue', html_c))
+        if not html_parts:
+            continue
+        merged_html = merge_html_parts(html_parts, 'issue')
+        if dry_run:
+            write_dry_run_html('issue', receiver, merged_html)
+            email_sent_count += 1
+            continue
         actual_receivers = [test_email] if test_mode else [email_address]
-        send_email(html_m.replace('.html', '.xlsx'), receiver, actual_receivers,
+        send_email('', receiver, actual_receivers,
                    'openEuler 待处理Issue汇总',
-                   body_text='以下是您参与openEuler社区的SIG仓库下待处理的Issue，烦请您及时跟进')
-        email_sent_count += 1
-        if test_mode:
-            log.logger.info('[TEST MODE] Issue email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
-        else:
-            log.logger.info('Issue email {} sent to {}'.format(email_sent_count, email_address))
-
-    for receiver in sorted(committer_issue_dict.keys()):
-        if test_mode:
-            if email_sent_count >= MAX_EMAILS:
-                break
-        html_c = send_issue_email(committer_issue_dict[receiver], receiver, 'committer', compare_dict)
-        if not html_c:
-            continue
-        email_address = email_mappings.get(receiver)
-        actual_receivers = [test_email] if test_mode else [email_address]
-        send_email(html_c.replace('.html', '.xlsx'), receiver, actual_receivers,
-                   'openEuler 待处理Issue汇总（Committer）',
-                   body_text='以下是您参与openEuler社区的SIG仓库下待处理的Issue，烦请您及时跟进')
+                   body_text='以下是您参与openEuler社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。',
+                   html_content=merged_html)
         email_sent_count += 1
         if test_mode:
             log.logger.info('[TEST MODE] Issue email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
@@ -256,11 +244,7 @@ def main():
     compare_dict = all_sigs_compare(sigs_list)
     print('Compare Dict: {}'.format(compare_dict))
     repos_issues_mapping = get_repos_issues_mapping()
-    whitelist_active = os.path.exists('email_whitelist.yaml')
-    whitelist = []
-    if whitelist_active:
-        whitelist = yaml.safe_load(open('email_whitelist.yaml', 'r').read()) or []
-    issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, whitelist, whitelist_active)
+    issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict)
 
 
 if __name__ == '__main__':
