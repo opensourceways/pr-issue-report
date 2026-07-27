@@ -22,5 +22,20 @@ source python3.11.env.sh
 # Install dependencies with mirror (PyPI blocked on this node)
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple -q
 
+# Test mode settings
+if [[ "$DRY_RUN" == "true" ]]; then
+    rm -rf test_output
+    mkdir -p test_output
+fi
+
+# Reply-To for unsubscribe emails
+export email_reply_to="${email_reply_to:-huanglei227@h-partners.com}"
+
 python3 pr_statistics.py
 python3 issue_statistics.py
+
+# Archive test output when DRY_RUN
+if [[ "$DRY_RUN" == "true" ]]; then
+    tar -czf test_output.tar.gz test_output/
+    echo "Test HTML files generated in test_output/"
+fi

@@ -139,21 +139,21 @@ class TestPrStatistics:
                             lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
 
         pr_statistics(str(tmp_path), sigs_sample, repos_pulls_mapping_sample,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
 
         # At least one email should have been sent (for maintainer1)
         assert len(sent_emails) > 0
         names = [e[0] for e in sent_emails]
         assert 'maintainer1' in names
 
-    def test_whitelist_active_filters_maintainers(self, tmp_path, monkeypatch,
-                                                   sigs_sample, repos_pulls_mapping_sample,
-                                                   compare_dict_sample):
-        """When whitelist is active, non-whitelisted maintainers are skipped."""
+    def test_controls_filter_maintainer_part(self, tmp_path, monkeypatch,
+                                              sigs_sample, repos_pulls_mapping_sample,
+                                              compare_dict_sample):
+        """When controls disable maintainer part, that part is skipped."""
         monkeypatch.setattr('pr_statistics.get_email_mappings',
-                            lambda: {'maintainer1': 'm1@e.com', 'maintainer2': 'm2@e.com'})
+                            lambda: {'maintainer1': 'm1@e.com'})
         monkeypatch.setattr('pr_statistics.get_maintainers',
-                            lambda sig: (['maintainer1', 'maintainer2'], True))
+                            lambda sig: (['maintainer1'], True))
         monkeypatch.setattr('pr_statistics.get_committers_mapping',
                             lambda sig: {})
 
@@ -164,13 +164,20 @@ class TestPrStatistics:
         monkeypatch.setattr('pr_statistics.send_email',
                             lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
 
-        # Only maintainer1 in whitelist
-        pr_statistics(str(tmp_path), sigs_sample, repos_pulls_mapping_sample,
-                      compare_dict_sample, ['maintainer1'], whitelist_active=True)
+        controls = {
+            'maintainer1': {
+                'pr': {'maintainer': False, 'committer': True},
+                'issue': {'maintainer': True, 'committer': True},
+            }
+        }
+        monkeypatch.setattr('pr_statistics.load_email_controls', lambda: controls)
 
+        pr_statistics(str(tmp_path), sigs_sample, repos_pulls_mapping_sample,
+                      compare_dict_sample)
+
+        # maintainer1 has no committer part, so no email
         names = [e[0] for e in sent_emails]
-        assert 'maintainer1' in names
-        assert 'maintainer2' not in names
+        assert 'maintainer1' not in names
 
     def test_skip_kernel_sig(self, tmp_path, monkeypatch, compare_dict_sample):
         """Kernel SIG should be skipped."""
@@ -190,7 +197,7 @@ class TestPrStatistics:
         repos = {'openeuler/kernel/main': self._make_pull_item(
             'https://gitcode.com/openeuler/kernel/pulls/1')}
         pr_statistics(str(tmp_path), kernel_sigs, repos,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
         # No emails for Kernel SIG
         assert len(sent_emails) == 0
 
@@ -210,7 +217,7 @@ class TestPrStatistics:
                             lambda x, c, is_issue=False: None)
 
         pr_statistics(str(tmp_path), empty_sigs, {},
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
         assert len(sent_emails) == 0
 
     def test_non_openeuler_repos_filtered(self, tmp_path, monkeypatch, compare_dict_sample):
@@ -233,7 +240,7 @@ class TestPrStatistics:
         repos = {'openeuler/valid-repo/main': self._make_pull_item(
             'https://gitcode.com/openeuler/valid-repo/pulls/1')}
         pr_statistics(str(tmp_path), other_sigs, repos,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
         # Only 'other/repo' is filtered, 'openeuler/valid-repo' is processed
         assert len(sent_emails) > 0
 
@@ -260,12 +267,12 @@ class TestPrStatistics:
                             lambda x, n, r, s, **kw: sent_emails.append(n))
 
         pr_statistics(str(tmp_path), sigs_sample, pulls,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
         assert len(sent_emails) > 0
 
-    def test_maintainer_also_committer_merged_email(self, tmp_path, monkeypatch,
-                                                     compare_dict_sample):
-        """Maintainer who is also committer gets one merged email (two tables)."""
+    def test_maintainer_also_committer_one_email_two_parts(self, tmp_path, monkeypatch,
+                                                           compare_dict_sample):
+        """Maintainer who is also committer gets one email with two parts."""
         sigs = [{'name': 'sig-ai',
                  'repositories': ['openeuler/ai-framework']}]
         monkeypatch.setattr('pr_statistics.get_email_mappings',
@@ -287,7 +294,6 @@ class TestPrStatistics:
             return csv_path.replace('.csv', '.xlsx')
 
         def fake_excel(xlsx_path, compare_dict, is_issue=False):
-            # Create HTML file so the merge logic can read it
             html_path = xlsx_path.replace('.xlsx', '.html')
             with open(html_path, 'w', encoding='utf-8') as f:
                 f.write('<html><body><table>PR Table</table></body></html>')
@@ -296,17 +302,23 @@ class TestPrStatistics:
         monkeypatch.setattr('pr_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('pr_statistics.send_email',
-                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s, kw.get('html_content', ''))))
 
         pr_statistics(str(tmp_path), sigs, pulls,
-                      compare_dict_sample, [], whitelist_active=False)
-        # m1 should get exactly 1 email (merged), not 2
+                      compare_dict_sample)
+        # m1 should get exactly 1 email
         m1_emails = [e for e in sent_emails if e[0] == 'm1']
         assert len(m1_emails) == 1
+        # Subject should not contain Committer
+        assert 'Committer' not in m1_emails[0][2]
+        # HTML should contain both role titles
+        html = m1_emails[0][3]
+        assert '作为 Maintainer 的 PR' in html
+        assert '作为 Committer 的 PR' in html
 
-    def test_pure_committer_gets_separate_email(self, tmp_path, monkeypatch,
-                                                  compare_dict_sample):
-        """Pure committer (not maintainer) gets a committer subject email."""
+    def test_pure_committer_gets_one_email(self, tmp_path, monkeypatch,
+                                           compare_dict_sample):
+        """Pure committer gets one email with only committer part."""
         sigs = [{'name': 'sig-ai',
                  'repositories': ['openeuler/ai-framework']}]
         monkeypatch.setattr('pr_statistics.get_email_mappings',
@@ -333,14 +345,18 @@ class TestPrStatistics:
         monkeypatch.setattr('pr_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('pr_statistics.send_email',
-                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
+                            lambda x, n, r, s, **kw: sent_emails.append((n, r, s, kw.get('html_content', ''))))
 
         pr_statistics(str(tmp_path), sigs, pulls,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
 
         c1_emails = [e for e in sent_emails if e[0] == 'c1']
         assert len(c1_emails) == 1
-        assert 'Committer' in c1_emails[0][2]
+        assert 'Committer' not in c1_emails[0][2]
+        html = c1_emails[0][3]
+        # Single part: no role title, but should not contain maintainer title either
+        assert '作为 Maintainer 的 PR' not in html
+        assert 'PR Table' in html
 
     def test_test_mode_limits_3_emails(self, tmp_path, monkeypatch,
                                         sigs_sample, repos_pulls_mapping_sample,
@@ -372,38 +388,76 @@ class TestPrStatistics:
                 ref='branch{}'.format(i))
 
         pr_statistics(str(tmp_path), sigs_sample, pulls,
-                      compare_dict_sample, [], whitelist_active=False)
+                      compare_dict_sample)
 
         assert len(sent_emails) == 3
         for _, receivers, _ in sent_emails:
             assert receivers == ['test@example.com']
 
-    def test_test_mode_skips_whitelist(self, tmp_path, monkeypatch,
-                                        sigs_sample, repos_pulls_mapping_sample,
-                                        compare_dict_sample):
-        """In test mode, whitelist filtering is skipped."""
-        monkeypatch.setenv('test_reviever_email', 'test@example.com')
+    def test_dry_run_generates_local_html(self, tmp_path, monkeypatch,
+                                          sigs_sample, repos_pulls_mapping_sample,
+                                          compare_dict_sample):
+        """DRY_RUN generates local HTML files without sending emails."""
+        monkeypatch.setenv('DRY_RUN', 'true')
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / 'data').mkdir()
         monkeypatch.setattr('pr_statistics.get_email_mappings',
                             lambda: {'m1': 'm1@e.com'})
         monkeypatch.setattr('pr_statistics.get_maintainers',
                             lambda sig: (['m1'], True))
         monkeypatch.setattr('pr_statistics.get_committers_mapping', lambda sig: {})
 
-        monkeypatch.setattr('pr_statistics.csv_to_xlsx',
-                            lambda c: c.replace('.csv', '.xlsx'))
+        def fake_csv(csv_path):
+            return csv_path.replace('.csv', '.xlsx')
+
+        def fake_excel(xlsx_path, compare_dict, is_issue=False):
+            html_path = xlsx_path.replace('.xlsx', '.html')
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write('<html><body><table>PR Table</table></body></html>')
+
+        monkeypatch.setattr('pr_statistics.csv_to_xlsx', fake_csv)
+        monkeypatch.setattr('pr_statistics.excel_optimization', fake_excel)
+        sent_emails = []
+        monkeypatch.setattr('pr_statistics.send_email',
+                            lambda x, n, r, s, **kw: sent_emails.append(n))
+
+        pr_statistics(str(tmp_path / 'data'), sigs_sample, repos_pulls_mapping_sample,
+                      compare_dict_sample)
+
+        assert len(sent_emails) == 0
+        assert (tmp_path / 'test_output' / 'pr_m1.html').exists()
+
+    def test_test_user_filters(self, tmp_path, monkeypatch,
+                               sigs_sample, repos_pulls_mapping_sample,
+                               compare_dict_sample):
+        """TEST_USER only processes the specified user."""
+        monkeypatch.setenv('TEST_USER', 'm1')
+        monkeypatch.setattr('pr_statistics.get_email_mappings',
+                            lambda: {'m1': 'm1@e.com', 'm2': 'm2@e.com'})
+        monkeypatch.setattr('pr_statistics.get_maintainers',
+                            lambda sig: (['m1', 'm2'], True))
+        monkeypatch.setattr('pr_statistics.get_committers_mapping', lambda sig: {})
+
+        def fake_csv(csv_path):
+            return csv_path.replace('.csv', '.xlsx')
+
+        def fake_excel(xlsx_path, compare_dict, is_issue=False):
+            html_path = xlsx_path.replace('.xlsx', '.html')
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write('<html><body><table>PR Table</table></body></html>')
+
+        monkeypatch.setattr('pr_statistics.csv_to_xlsx', fake_csv)
+        monkeypatch.setattr('pr_statistics.excel_optimization', fake_excel)
         sent_emails = []
         monkeypatch.setattr('pr_statistics.send_email',
                             lambda x, n, r, s, **kw: sent_emails.append((n, r, s)))
-        monkeypatch.setattr('pr_statistics.excel_optimization',
-                            lambda x, c, is_issue=False: None)
 
-        # Pass empty whitelist — in prod mode this would block
         pr_statistics(str(tmp_path), sigs_sample, repos_pulls_mapping_sample,
-                      compare_dict_sample, [], whitelist_active=True)
+                      compare_dict_sample)
 
-        # Even with empty whitelist, test mode still sends
-        assert len(sent_emails) > 0
-        assert sent_emails[0][1] == ['test@example.com']
+        names = [e[0] for e in sent_emails]
+        assert 'm1' in names
+        assert 'm2' not in names
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +472,6 @@ class TestMain:
         monkeypatch.setattr('pr_statistics.get_sigs', lambda: (calls.append('sigs'), ([])))
         monkeypatch.setattr('pr_statistics.all_sigs_compare', lambda s: calls.append('comp') or {})
         monkeypatch.setattr('pr_statistics.get_repos_pulls_mapping', lambda: calls.append('pulls') or {})
-        monkeypatch.setattr('pr_statistics.os.path.exists', lambda p: 'whitelist' in p)
         monkeypatch.setattr('pr_statistics.pr_statistics', lambda *a: calls.append('stats'))
         monkeypatch.setattr('pr_statistics.yaml', MagicMock())
 

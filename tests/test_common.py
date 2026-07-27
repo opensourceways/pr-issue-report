@@ -23,6 +23,7 @@ from common import (
     create_email_mappings,
     csv_to_xlsx,
     excel_optimization,
+    expand_controls,
     fill_status,
     get_committers_mapping,
     get_email_mappings,
@@ -30,9 +31,13 @@ from common import (
     get_repo_members,
     get_sigs,
     get_user_id,
+    load_email_controls,
+    merge_html_parts,
     prepare_env,
     send_email,
+    should_send,
     single_sig_compare,
+    write_dry_run_html,
 )
 
 
@@ -828,6 +833,118 @@ class TestSendEmail:
         # The MIMEText would have the fixed content
         from common import MIMEText
         # MIMEText was called with the fixed body
+
+
+# ---------------------------------------------------------------------------
+# expand_controls / load_email_controls / should_send
+# ---------------------------------------------------------------------------
+
+class TestExpandControls:
+    def test_none_config(self):
+        result = expand_controls(None)
+        assert result['pr']['maintainer'] is True
+        assert result['issue']['committer'] is True
+
+    def test_false_config(self):
+        result = expand_controls(False)
+        assert result['pr']['maintainer'] is True
+        assert result['issue']['committer'] is True
+
+    def test_all_false(self):
+        result = expand_controls({'all': False})
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is False
+        assert result['issue']['maintainer'] is False
+        assert result['issue']['committer'] is False
+
+    def test_pr_false(self):
+        result = expand_controls({'pr': False})
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is False
+        assert result['issue']['maintainer'] is True
+
+    def test_partial_role_control(self):
+        result = expand_controls({
+            'pr': {'maintainer': False},
+            'issue': {'committer': False},
+        })
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is True
+        assert result['issue']['maintainer'] is True
+        assert result['issue']['committer'] is False
+
+
+class TestLoadEmailControls:
+    def test_missing_file_returns_default(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        controls = load_email_controls()
+        assert controls['anyone']['pr']['maintainer'] is True
+
+    def test_loads_from_env_path(self, tmp_path, monkeypatch):
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text('alice:\n  pr:\n    maintainer: false\n', encoding='utf-8')
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', str(controls_file))
+        controls = load_email_controls()
+        assert controls['alice']['pr']['maintainer'] is False
+        assert controls['alice']['pr']['committer'] is True
+
+    def test_loads_from_arg_path(self, tmp_path):
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text('bob:\n  issue: false\n', encoding='utf-8')
+        controls = load_email_controls(str(controls_file))
+        assert controls['bob']['issue']['maintainer'] is False
+        assert controls['bob']['issue']['committer'] is False
+        assert controls['bob']['pr']['maintainer'] is True
+
+
+class TestShouldSend:
+    def test_default_true(self):
+        from collections import defaultdict
+        controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
+        assert should_send(controls, 'alice', 'pr', 'maintainer') is True
+
+    def test_false_value(self):
+        controls = {'alice': {'pr': {'maintainer': False, 'committer': True}}}
+        assert should_send(controls, 'alice', 'pr', 'maintainer') is False
+        assert should_send(controls, 'alice', 'pr', 'committer') is True
+
+
+# ---------------------------------------------------------------------------
+# merge_html_parts / write_dry_run_html
+# ---------------------------------------------------------------------------
+
+class TestMergeHtmlParts:
+    def test_single_part(self, tmp_path):
+        html = tmp_path / 'part1.html'
+        html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html))], 'pr')
+        assert 'Part 1' in result
+        assert 'Title 1' not in result
+        assert '退订' in result
+
+    def test_two_parts(self, tmp_path):
+        html1 = tmp_path / 'part1.html'
+        html2 = tmp_path / 'part2.html'
+        html1.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        html2.write_text('<html><body><p>Part 2</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html1)), ('Title 2', str(html2))], 'pr')
+        assert 'Part 1' in result
+        assert 'Part 2' in result
+        assert '<h3' in result
+        assert 'Title 1' in result
+        assert 'Title 2' in result
+
+    def test_empty_parts(self):
+        assert merge_html_parts([], 'pr') is None
+
+
+class TestWriteDryRunHtml:
+    def test_writes_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        write_dry_run_html('pr', 'alice', '<html><body>Test</body></html>')
+        output = tmp_path / 'test_output' / 'pr_alice.html'
+        assert output.exists()
+        assert 'Test' in output.read_text(encoding='utf-8')
 
 
 # ---------------------------------------------------------------------------

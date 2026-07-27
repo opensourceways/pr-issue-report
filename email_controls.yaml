@@ -1,0 +1,39 @@
+# email_controls.yaml
+# 邮件接收偏好控制文件
+#
+# 说明：
+# - 不在本文件中的用户，默认接收所有邮件和所有角色部分。
+# - 每个字段为布尔值：true 表示接收，false 表示不接收。
+# - 可以只声明需要关闭的部分，未声明的默认按 true 处理。
+#
+# 支持简化写法：
+#   username:
+#     pr: false          # 关闭整个 PR 邮件
+#   username:
+#     issue: false       # 关闭整个 Issue 邮件
+#   username:
+#     all: false         # 完全退订所有邮件
+#
+# 完整写法示例：
+#   username:
+#     pr:
+#       maintainer: false
+#       committer: true
+#     issue:
+#       maintainer: true
+#       committer: true
+
+# 示例用户（请根据实际退订需求修改）
+# zhangsan:
+#   pr:
+#     maintainer: false
+#     committer: true
+#   issue:
+#     maintainer: true
+#     committer: true
+
+# lisi:
+#   issue: false
+
+# wangwu:
+#   all: false
