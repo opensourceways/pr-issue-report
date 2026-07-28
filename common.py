@@ -655,7 +655,11 @@ def cal_sig_processed_rate(sig_name, ts):
         'timestamp': ts,
         'sig': sig_name
     }
-    r = requests.get(url, params=params, timeout=30)
+    try:
+        r = requests.get(url, params=params, timeout=30)
+    except requests.exceptions.RequestException as e:
+        log.logger.warning('Failed to query dsapi for sig {}: {}'.format(sig_name, e))
+        return -1
     if r.status_code != 200:
         processed_rate = -1
     else:
