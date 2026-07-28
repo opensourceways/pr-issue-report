@@ -919,7 +919,7 @@ class TestMergeHtmlParts:
         html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
         result = merge_html_parts([('Title 1', str(html))], 'pr')
         assert 'Part 1' in result
-        assert 'Title 1' not in result
+        assert 'Title 1' in result
         assert '退订' in result
 
     def test_two_parts(self, tmp_path):

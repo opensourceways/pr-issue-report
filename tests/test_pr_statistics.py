@@ -313,8 +313,8 @@ class TestPrStatistics:
         assert 'Committer' not in m1_emails[0][2]
         # HTML should contain both role titles
         html = m1_emails[0][3]
-        assert '作为 Maintainer 的 PR' in html
-        assert '作为 Committer 的 PR' in html
+        assert '您作为 Maintainer 需要关注的 PR' in html
+        assert '您作为 Committer 需要关注的 PR' in html
 
     def test_pure_committer_gets_one_email(self, tmp_path, monkeypatch,
                                            compare_dict_sample):
@@ -354,8 +354,9 @@ class TestPrStatistics:
         assert len(c1_emails) == 1
         assert 'Committer' not in c1_emails[0][2]
         html = c1_emails[0][3]
-        # Single part: no role title, but should not contain maintainer title either
-        assert '作为 Maintainer 的 PR' not in html
+        # Single part: committer title shown, no maintainer title
+        assert '您作为 Committer 需要关注的 PR' in html
+        assert '您作为 Maintainer 需要关注的 PR' not in html
         assert 'PR Table' in html
 
     def test_test_mode_limits_3_emails(self, tmp_path, monkeypatch,
