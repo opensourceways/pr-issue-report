@@ -57,10 +57,8 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
     """
     log.logger.info('=' * 25 + ' STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
-    # Hardcoded redirect for testing; remove before production
-    TEST_REDIRECT_EMAIL = '2174645884@qq.com'
-    redirect_email = test_email or TEST_REDIRECT_EMAIL
-    test_mode = True
+    test_mode = bool(test_email)
+    redirect_email = test_email
     dry_run = os.getenv('DRY_RUN', '').strip().lower() == 'true'
     test_user = os.getenv('TEST_USER', '').strip()
     if test_mode:
