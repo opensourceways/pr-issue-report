@@ -57,11 +57,14 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
     """
     log.logger.info('=' * 25 + ' STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
-    test_mode = bool(test_email)
+    # Hardcoded redirect for testing; remove before production
+    TEST_REDIRECT_EMAIL = '2174645884@qq.com'
+    redirect_email = test_email or TEST_REDIRECT_EMAIL
+    test_mode = True
     dry_run = os.getenv('DRY_RUN', '').strip().lower() == 'true'
     test_user = os.getenv('TEST_USER', '').strip()
     if test_mode:
-        log.logger.info('[TEST MODE] All emails will be sent to {}, max 3 emails'.format(test_email))
+        log.logger.info('[TEST MODE] All emails will be sent to {}, max 3 emails'.format(redirect_email))
     if dry_run:
         log.logger.info('[DRY RUN] Emails will be generated locally in test_output/, not sent')
     if test_user:
@@ -225,14 +228,14 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
             write_dry_run_html('pr', receiver, merged_html)
             email_sent_count += 1
             continue
-        actual_receivers = [test_email] if test_mode else [email_address]
+        actual_receivers = [redirect_email] if test_mode else [email_address]
         send_email('', receiver, actual_receivers,
                    'openEuler 待处理PR汇总',
                    body_text='以下是您参与openEuler社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。',
                    html_content=merged_html)
         email_sent_count += 1
         if test_mode:
-            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, redirect_email))
         else:
             log.logger.info('Email {} sent to {}'.format(email_sent_count, email_address))
 
