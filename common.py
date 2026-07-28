@@ -357,12 +357,9 @@ def merge_html_parts(parts, mail_type):
         bodies.append((title, body))
     if not bodies:
         return None
-    if len(bodies) == 1:
-        merged_body = bodies[0][1]
-    else:
-        merged_body = ''
-        for title, body in bodies:
-            merged_body += '<h3 style="margin-top:30px">{}</h3>\n{}'.format(title, body)
+    merged_body = ''
+    for title, body in bodies:
+        merged_body += '<h3 style="margin-top:30px">{}</h3>\n{}'.format(title, body)
     reply_to = os.getenv('email_reply_to', 'huanglei227@h-partners.com').strip()
     unsubscribe_note = (
         '<p style="font-size:12px;color:#666;">'

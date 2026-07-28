@@ -214,11 +214,11 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
         if want_maintainer:
             html_m = generate_pr_html(maintainer_pr_dict[receiver], receiver, 'maintainer', compare_dict)
             if html_m:
-                html_parts.append(('作为 Maintainer 的 PR', html_m))
+                html_parts.append(('您作为 Maintainer 需要关注的 PR', html_m))
         if want_committer:
             html_c = generate_pr_html(committer_pr_dict[receiver], receiver, 'committer', compare_dict)
             if html_c:
-                html_parts.append(('作为 Committer 的 PR', html_c))
+                html_parts.append(('您作为 Committer 需要关注的 PR', html_c))
         if not html_parts:
             continue
         merged_html = merge_html_parts(html_parts, 'pr')
