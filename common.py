@@ -363,10 +363,11 @@ def merge_html_parts(parts, mail_type):
         merged_body = ''
         for title, body in bodies:
             merged_body += '<h3 style="margin-top:30px">{}</h3>\n{}'.format(title, body)
+    reply_to = os.getenv('email_reply_to', 'huanglei227@h-partners.com').strip()
     unsubscribe_note = (
         '<p style="font-size:12px;color:#666;">'
         '如需退订，请直接回复本邮件，或发送邮件至 '
-        '<b>huanglei227@h-partners.com</b>，并注明退订类型：<br>'
+        '<b>{}</b>，并注明退订类型：<br>'
         '• 退订 PR 汇总<br>'
         '• 退订 Issue 汇总<br>'
         '• 只退订作为 Maintainer 的部分<br>'
@@ -374,7 +375,7 @@ def merge_html_parts(parts, mail_type):
         '• 完全退订所有邮件<br><br>'
         '管理员将在 1-2 个工作日内处理。'
         '</p>'
-    )
+    ).format(reply_to)
     merged_body += unsubscribe_note
     return '<html><body>{}</body></html>'.format(merged_body)
 
