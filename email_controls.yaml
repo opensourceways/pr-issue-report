@@ -37,3 +37,11 @@
 
 # wangwu:
 #   all: false
+
+# huyuhan9@huawei.com (sig-intelligence committer)：完全退订所有汇总邮件
+binaryzero-hyh:
+  all: false
+
+# subin19@huawei.com (sig-HPC committer)：完全退订所有汇总邮件
+subin19:
+  all: false
