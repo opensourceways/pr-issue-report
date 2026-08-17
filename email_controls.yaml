@@ -22,6 +22,14 @@
 #     issue:
 #       maintainer: true
 #       committer: true
+#
+# 按社区覆盖（可选，社区名见 communities.yaml）：
+#   username:
+#     issue: false       # 基础配置：对所有社区生效
+#     communities:
+#       boostkit:
+#         all: false     # boostkit 社区完全退订；
+#                        # 该社区的配置整体覆盖基础配置，未声明的部分默认接收
 
 # 示例用户（请根据实际退订需求修改）
 # zhangsan:
@@ -44,4 +52,8 @@ binaryzero-hyh:
 
 # subin19@huawei.com (sig-HPC committer)：完全退订所有汇总邮件
 subin19:
+  all: false
+
+# hongxuming@huawei.com (sig-CloudNative committer)：完全退订所有汇总邮件
+hong-xuming:
   all: false
