@@ -401,6 +401,10 @@ def load_email_controls(path=None, community=None):
     if path is None:
         path = os.getenv('EMAIL_CONTROLS_PATH') or os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'email_controls.yaml')
+    if not os.path.isabs(path):
+        # resolve relative paths against the repo root, not the CWD
+        # (the process chdirs into the per-community workdir at startup)
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
     if community is None:
         community = os.getenv('COMMUNITY', 'openeuler').strip() or 'openeuler'
     controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))

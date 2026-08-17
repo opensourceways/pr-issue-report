@@ -889,6 +889,13 @@ class TestLoadEmailControls:
         assert controls['binaryzero-hyh']['pr']['maintainer'] is False
         assert controls['binaryzero-hyh']['issue']['committer'] is False
 
+    def test_relative_env_path_resolves_repo_root(self, tmp_path, monkeypatch):
+        """A relative EMAIL_CONTROLS_PATH resolves against the repo root, not CWD."""
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', 'email_controls.yaml')
+        monkeypatch.chdir(tmp_path)
+        controls = load_email_controls()
+        assert controls['binaryzero-hyh']['pr']['maintainer'] is False
+
     def test_loads_from_env_path(self, tmp_path, monkeypatch):
         controls_file = tmp_path / 'controls.yaml'
         controls_file.write_text('alice:\n  pr:\n    maintainer: false\n', encoding='utf-8')
