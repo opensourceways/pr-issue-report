@@ -45,12 +45,30 @@ class Logger(object):
 
     def __init__(self, filename, level='info', when='D', backCount=3,
                  fmt='%(asctime)s - %(pathname)s[line:%(lineno)d] - %(levelname)s: %(message)s'):
+        self.fmt = fmt
         self.logger = logging.getLogger(filename)
-        format_str = logging.Formatter(fmt)
+        format_str = logging.Formatter(self.fmt)
         self.logger.setLevel(self.level_relations.get(level))
         sh = logging.StreamHandler()
         sh.setFormatter(format_str)
         th = handlers.TimedRotatingFileHandler(filename=filename, when=when, backupCount=backCount, encoding='utf-8')
+        th.setFormatter(format_str)
+        self.logger.addHandler(sh)
+        self.logger.addHandler(th)
+
+    def rebind(self, filename, level='debug'):
+        """Re-point the logger's file handler to a new filename (e.g. after chdir)."""
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
+        format_str = logging.Formatter(self.fmt)
+        self.logger.setLevel(self.level_relations.get(level))
+        sh = logging.StreamHandler()
+        sh.setFormatter(format_str)
+        th = handlers.TimedRotatingFileHandler(filename=filename, when='D', backupCount=3, encoding='utf-8')
         th.setFormatter(format_str)
         self.logger.addHandler(sh)
         self.logger.addHandler(th)
@@ -60,17 +78,63 @@ log = Logger('statistics.log', level='debug')
 
 
 # ---------------------------------------------------------------------------
+# Community config
+# ---------------------------------------------------------------------------
+
+_COMMUNITIES_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'communities.yaml')
+_community_config_cache = {}
+
+
+def load_community_config(name=None):
+    """
+    Load community config from communities.yaml (resolved relative to this file).
+    :param name: community name, defaults to the COMMUNITY env var or 'openeuler'
+    :return: config dict (with 'name' injected)
+    """
+    if name is None:
+        name = os.getenv('COMMUNITY', 'openeuler').strip() or 'openeuler'
+    if name in _community_config_cache:
+        return _community_config_cache[name]
+    with open(_COMMUNITIES_CONFIG_PATH, 'r', encoding='utf-8') as f:
+        all_configs = yaml.safe_load(f)
+    if name not in all_configs:
+        log.logger.error('ERROR! Unknown community {} in {}, exit...'.format(name, _COMMUNITIES_CONFIG_PATH))
+        sys.exit(1)
+    config = dict(all_configs[name])
+    config['name'] = name
+    _community_config_cache[name] = config
+    return config
+
+
+def setup_community():
+    """
+    Load the active community config and switch into its dedicated working directory.
+    Each community gets its own folder containing community/, data/,
+    email_mapping.yaml and statistics.log, so runs never interfere.
+    :return: config dict
+    """
+    config = load_community_config()
+    os.makedirs(config['name'], exist_ok=True)
+    os.chdir(config['name'])
+    log.rebind('statistics.log')
+    log.logger.info('Community: {}, workdir: {}'.format(config['name'], os.getcwd()))
+    return config
+
+
+# ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
 
-def prepare_env():
+def prepare_env(config=None):
     """
     Prepare repository and directory
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
     log.logger.info('=' * 25 + ' PREPARE ENVIRONMENT ' + '=' * 25)
     if os.path.exists('community'):
         shutil.rmtree('community')
-    subprocess.run(['git', 'clone', 'https://gitcode.com/openeuler/community.git'], check=True)  # nosec B603 B607
+    subprocess.run(['git', 'clone', config['community_repo']], check=True)  # nosec B603 B607
     if not os.path.exists('community'):
         log.logger.error('Fail to clone code, exit...')
         sys.exit(1)
@@ -89,34 +153,55 @@ def prepare_env():
 # SIG parsing
 # ---------------------------------------------------------------------------
 
-def get_sigs():
+def get_sigs(config=None):
     """
     Get relationship between sigs and repositories
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
     log.logger.info('=' * 25 + ' GET SIGS INFO ' + '=' * 25)
+    exclude_entries = ['README.md', 'sig-template', 'sig-recycle', 'create_sig_info_template.py']
+    orgs_lower = {org.lower(): org for org in config['orgs']}
     sig_path = os.path.join('community', 'sig')
     sigs = []
     sigs_list = []
     for i in sorted(os.listdir(sig_path)):
-        if i in ['README.md', 'sig-template', 'sig-recycle', 'create_sig_info_template.py']:
+        if i in exclude_entries:
+            continue
+        sig_dir = os.path.join(sig_path, i)
+        if not os.path.isdir(sig_dir):
             continue
         if i not in [x['name'] for x in sigs]:
             sigs.append({'name': i, 'repositories': []})
             sigs_list.append(i)
-        if 'openeuler' in os.listdir(os.path.join(sig_path, i)):
-            for filesdir, _, repos in os.walk(os.path.join(sig_path, i, 'openeuler')):
+        if config.get('repo_source') == 'sig_info':
+            # sig-info.yaml is authoritative (its dir yamls may be stale)
+            sig_info_file = os.path.join(sig_dir, 'sig-info.yaml')
+            if not os.path.exists(sig_info_file):
+                continue
+            with open(sig_info_file, 'r', encoding='utf-8') as f:
+                sig_info = yaml.safe_load(f)
+            for entry in sig_info.get('repositories') or []:
+                for repo in entry.get('repo') or []:
+                    repo = repo.strip()
+                    if repo and repo not in sigs[-1]['repositories']:
+                        sigs[-1]['repositories'].append(repo)
+            continue
+        for subdir in os.listdir(sig_dir):
+            canonical_org = orgs_lower.get(subdir.lower())
+            if canonical_org is None:
+                continue
+            org_dir = os.path.join(sig_dir, subdir)
+            if not os.path.isdir(org_dir):
+                continue
+            for filesdir, _, repos in os.walk(org_dir):
                 for repo in repos:
+                    if not repo.endswith('.yaml'):
+                        continue
                     for sig in sigs:
                         if sig['name'] == i:
                             repositories = sig['repositories']
-                            repositories.append(os.path.join('openeuler', repo.split('.yaml')[0]))
-        if 'src-openeuler' in os.listdir(os.path.join(sig_path, i)):
-            for filesdir, _, src_repos in os.walk(os.path.join(sig_path, i, 'src-openeuler')):
-                for src_repo in src_repos:
-                    for sig in sigs:
-                        if sig['name'] == i:
-                            repositories = sig['repositories']
-                            repositories.append(os.path.join('src-openeuler', src_repo.split('.yaml')[0]))
+                            repositories.append(os.path.join(canonical_org, repo.split('.yaml')[0]))
     log.logger.info('Get sigs info.\n')
     return sigs, sigs_list
 
@@ -194,13 +279,15 @@ def get_repo_members(maintainers, committers_mapping, repo):
 # Email mapping
 # ---------------------------------------------------------------------------
 
-def create_email_mappings():
+def create_email_mappings(config=None):
     """
     Generate mappings between gitee_id and email addresses
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
     email_mappings = {}
     if not os.path.exists('community'):
-        subprocess.run(['git', 'clone', 'https://gitcode.com/openeuler/community.git'], check=True)  # nosec B603 B607
+        subprocess.run(['git', 'clone', config['community_repo']], check=True)  # nosec B603 B607
     sig_path = os.path.join('community', 'sig')
     for i in sorted(os.listdir(sig_path)):
         if i in ['README.md', 'sig-template', 'sig-recycle', 'create_sig_info_template.py']:
@@ -300,14 +387,22 @@ def expand_controls(config):
     return result
 
 
-def load_email_controls(path=None):
+def load_email_controls(path=None, community=None):
     """
     Load email control preferences from email_controls.yaml.
-    :param path: optional path to control file, defaults to EMAIL_CONTROLS_PATH env var or 'email_controls.yaml'
+    A user's top-level config applies to all communities; an optional
+    'communities' mapping overrides it completely for the named community
+    (cells not declared there default to True).
+    :param path: optional path to control file, defaults to EMAIL_CONTROLS_PATH env var
+                 or email_controls.yaml next to this file (repo root, independent of CWD)
+    :param community: active community name, defaults to the COMMUNITY env var or 'openeuler'
     :return: nested dict controls[gitee_id][mail_type][role] = bool
     """
     if path is None:
-        path = os.getenv('EMAIL_CONTROLS_PATH', 'email_controls.yaml')
+        path = os.getenv('EMAIL_CONTROLS_PATH') or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'email_controls.yaml')
+    if community is None:
+        community = os.getenv('COMMUNITY', 'openeuler').strip() or 'openeuler'
     controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
     if not os.path.exists(path):
         log.logger.info('Email controls file {} not found, all users will receive all emails'.format(path))
@@ -318,8 +413,13 @@ def load_email_controls(path=None):
         log.logger.error('Failed to parse email controls file {}: {}'.format(path, e))
         return controls
     for gitee_id, config in raw.items():
-        controls[gitee_id] = expand_controls(config)
-    log.logger.info('Loaded email controls from {}'.format(path))
+        expanded = expand_controls(config)
+        if isinstance(config, dict):
+            per_community = config.get('communities')
+            if isinstance(per_community, dict) and community in per_community:
+                expanded = expand_controls(per_community[community])
+        controls[gitee_id] = expanded
+    log.logger.info('Loaded email controls from {} (community: {})'.format(path, community))
     return controls
 
 
@@ -683,12 +783,16 @@ def cal_compare_timestamp():
     return timestamp_today, timestamp_last
 
 
-def all_sigs_compare(sigs_list):
+def all_sigs_compare(sigs_list, config=None):
     """
     Generate compare info of all sigs
     :param sigs_list: a name list of all sigs
+    :param config: community config dict (defaults to the active community)
     :return: compare info of all sigs
     """
+    config = config or load_community_config()
+    if config.get('processed_rate') == 'none':
+        return {sig: '' for sig in sigs_list}
     compare_dict = {}
     for sig in sigs_list:
         compare_info = compare_sig_processed_rate(sig)
@@ -726,3 +830,97 @@ def compare_sig_processed_rate(sig_name):
         elif processed_rate_now < processed_rate_last:
             compare_rate = round(processed_rate_last - processed_rate_now, 2)
             return 'PR处理率为{}%, 同比上周下降{}%'.format(processed_rate_now * 100, compare_rate * 100)
+
+
+# ---------------------------------------------------------------------------
+# GitCode API data source
+# ---------------------------------------------------------------------------
+
+GITCODE_API_BASE = 'https://gitcode.com/api/v5'
+
+
+def gitcode_fetch_repo_items(repo, kind, token):
+    """
+    Fetch all open items (pulls or issues) of one repo from the GitCode API, paginated.
+    403/404 (private or missing repos) are logged as warnings and skipped.
+    :param repo: full repo name, e.g. 'boostkit/community'
+    :param kind: 'pulls' or 'issues'
+    :param token: GitCode access token
+    :return: list of raw API items
+    """
+    items = []
+    page = 1
+    while True:
+        url = '{}/repos/{}/{}'.format(GITCODE_API_BASE, repo, kind)
+        params = {'state': 'open', 'per_page': 100, 'page': page, 'access_token': token}
+        try:
+            r = requests.get(url, params=params, timeout=30)
+        except requests.exceptions.RequestException as e:
+            log.logger.warning('Failed to get {} of {}: {}'.format(kind, repo, e))
+            return items
+        if r.status_code in (403, 404):
+            log.logger.warning('Skip {} {}: HTTP {} (private or not found)'.format(kind, repo, r.status_code))
+            return items
+        if r.status_code != 200:
+            log.logger.error('Fail to get {} of {}: HTTP {}'.format(kind, repo, r.status_code))
+            return items
+        data = r.json()
+        items += data
+        if len(data) < 100:
+            break
+        page += 1
+    return items
+
+
+def _iso_to_datetime_str(ts):
+    """Convert ISO 8601 time ('2026-08-14T14:39:27+08:00') to '%Y-%m-%d %H:%M:%S'."""
+    return datetime.datetime.fromisoformat(ts).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def adapt_gitcode_pr(item):
+    """Adapt a GitCode API pull request to the internal pull format used by ipb data."""
+    return {
+        'title': item['title'],
+        'link': item['html_url'],
+        'created_at': _iso_to_datetime_str(item['created_at']),
+        'draft': bool(item.get('draft')),
+        'labels': ','.join(label.get('name', '') for label in item.get('labels') or []),
+        'ref': (item.get('base') or {}).get('ref') or '-',
+        'mergeable': bool(item.get('mergeable')),
+    }
+
+
+def adapt_gitcode_issue(item):
+    """Adapt a GitCode API issue to the internal issue format used by ipb data."""
+    assignees = item.get('assignees') or []
+    return {
+        'title': item['title'],
+        'link': item['html_url'],
+        'created_at': _iso_to_datetime_str(item['created_at']),
+        'issue_type': item.get('issue_type') or '',
+        'issue_state': item.get('issue_state') or '',
+        'assignee': ','.join(a.get('login', '') for a in assignees),
+    }
+
+
+def gitcode_open_items(sigs, kind):
+    """
+    Fetch open pulls/issues for every repo of every sig via the GitCode API.
+    :param sigs: sigs list from get_sigs()
+    :param kind: 'pulls' or 'issues'
+    :return: mapping {org/repo/.../number: adapted_item}, keyed like the ipb source
+    """
+    token = os.getenv('GITCODE_TOKEN', '').strip()
+    if not token:
+        log.logger.error('ERROR! GITCODE_TOKEN is required for the gitcode_api data source, exit...')
+        sys.exit(1)
+    adapter = adapt_gitcode_pr if kind == 'pulls' else adapt_gitcode_issue
+    repos = sorted({repo for sig in sigs for repo in sig['repositories']})
+    log.logger.info('Fetching {} for {} repos via GitCode API'.format(kind, len(repos)))
+    mapping = {}
+    for repo in repos:
+        for item in gitcode_fetch_repo_items(repo, kind, token):
+            adapted = adapter(item)
+            mapping[adapted['link'].split('/', 3)[3]] = adapted
+    log.logger.info('Got {} open {} via GitCode API'.format(len(mapping), kind))
+    return mapping

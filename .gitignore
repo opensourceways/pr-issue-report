@@ -2,6 +2,10 @@
 community/
 data/
 
+# Per-community working directories
+/openeuler/
+/boostkit/
+
 # Runtime logs
 statistics.log
 statistics.log.*

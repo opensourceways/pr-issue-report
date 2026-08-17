@@ -22,10 +22,12 @@ source python3.11.env.sh
 # Install dependencies with mirror (PyPI blocked on this node)
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple -q
 
-# Test mode settings
+# Select the active community (see communities.yaml)
+export COMMUNITY=openeuler
+
+# Test mode settings (test_output lives inside the per-community directory)
 if [[ "$DRY_RUN" == "true" ]]; then
-    rm -rf test_output
-    mkdir -p test_output
+    rm -rf "$COMMUNITY/test_output"
 fi
 
 # Reply-To for unsubscribe emails
@@ -36,6 +38,6 @@ python3 issue_statistics.py
 
 # Archive test output when DRY_RUN
 if [[ "$DRY_RUN" == "true" ]]; then
-    tar -czf test_output.tar.gz test_output/
-    echo "Test HTML files generated in test_output/"
+    tar -czf test_output.tar.gz -C "$COMMUNITY" test_output/
+    echo "Test HTML files generated in $COMMUNITY/test_output/"
 fi

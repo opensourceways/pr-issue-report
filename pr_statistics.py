@@ -16,11 +16,16 @@ from common import *
 # PR data fetching
 # ---------------------------------------------------------------------------
 
-def get_repos_pulls_mapping():
+def get_repos_pulls_mapping(config=None, sigs=None):
     """
     Get mappings between repos and pulls
+    :param config: community config dict (defaults to the active community)
+    :param sigs: sigs list from get_sigs(), required for the gitcode_api data source
     :return: a dict of {repo: pulls}
     """
+    config = config or load_community_config()
+    if config.get('data_source') == 'gitcode_api':
+        return gitcode_open_items(sigs or [], 'pulls')
     enterprise_pulls = []
     page = 1
     while True:
@@ -48,13 +53,19 @@ def get_repos_pulls_mapping():
 # PR statistics
 # ---------------------------------------------------------------------------
 
-def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
+def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config=None):
     """
     :param data_dir: directory to store temporary data
     :param sigs: a dict of every sig and its repositories
     :param repos_pulls_mapping: mappings between repos and pulls
     :param compare_dict: a dict of every sig and its compare info
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
+    cla_label = config.get('cla_label')
+    ci_failed_label = config.get('ci_failed_label')
+    wait_update_label = config.get('wait_update_label')
+    orgs_lower = [org.lower() for org in config['orgs']]
     log.logger.info('=' * 25 + ' STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
     test_mode = bool(test_email)
@@ -77,8 +88,8 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
     maintainer_set = set()
     for sig in sigs:
         sig_name = sig['name']
-        if sig_name == 'Kernel':
-            log.logger.info('Skipping Kernel SIG (handled by hulk_robot_test)')
+        if sig_name in (config.get('skip_sigs') or []):
+            log.logger.info('Skipping {} SIG (configured to skip)'.format(sig_name))
             continue
         sig_repos = sig['repositories']
         log.logger.info('\nStarting to search sig {}'.format(sig_name))
@@ -89,7 +100,7 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
         for m in maintainers:
             maintainer_set.add(m)
         for full_repo in sig_repos:
-            if full_repo.split('/')[0] not in ['src-openeuler', 'openeuler']:
+            if full_repo.split('/')[0].lower() not in orgs_lower:
                 continue
             open_pr_list = []
             for mapping_key in repos_pulls_mapping.keys():
@@ -113,13 +124,13 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
                 status = '待合入'
                 if draft:
                     status = fill_status(status, '草稿')
-                if 'openeuler-cla/yes' not in labels:
+                if cla_label and cla_label not in labels:
                     status = fill_status(status, 'CLA认证失败')
-                if 'ci_failed' in labels:
+                if ci_failed_label and ci_failed_label in labels:
                     status = fill_status(status, '门禁检查失败')
                 if not item['mergeable']:
                     status = fill_status(status, '存在冲突')
-                if 'kind/wait_for_update' in labels:
+                if wait_update_label and wait_update_label in labels:
                     status = fill_status(status, '等待更新')
                 duration = count_duration(created_at)
                 link = "<a href='{0}'>{1}</a>".format(html_url, title)
@@ -228,8 +239,8 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict):
             continue
         actual_receivers = [redirect_email] if test_mode else [email_address]
         send_email('', receiver, actual_receivers,
-                   'openEuler 待处理PR汇总',
-                   body_text='以下是您参与openEuler社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。',
+                   config['mail_subject_pr'],
+                   body_text=config['mail_body_pr'],
                    html_content=merged_html)
         email_sent_count += 1
         if test_mode:
@@ -246,12 +257,13 @@ def main():
     """
     main function
     """
-    data_dir = prepare_env()
-    sigs, sigs_list = get_sigs()
-    compare_dict = all_sigs_compare(sigs_list)
+    config = setup_community()
+    data_dir = prepare_env(config)
+    sigs, sigs_list = get_sigs(config)
+    compare_dict = all_sigs_compare(sigs_list, config)
     print('Compare Dict: {}'.format(compare_dict))
-    repos_pulls_mapping = get_repos_pulls_mapping()
-    pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict)
+    repos_pulls_mapping = get_repos_pulls_mapping(config, sigs)
+    pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,34 @@
+# Per-community configuration for the weekly PR/Issue report.
+# The active community is selected by the COMMUNITY env var (default: openeuler).
+
+openeuler:
+  display_name: openEuler
+  community_repo: https://gitcode.com/openeuler/community.git
+  orgs: [openeuler, src-openeuler]
+  repo_source: dir_walk            # 遍历 sig/<Sig>/<org>/**/*.yaml 发现仓库
+  data_source: ipb                 # 聚合接口 ipb.osinfra.cn
+  cla_label: openeuler-cla/yes
+  ci_failed_label: ci_failed
+  wait_update_label: kind/wait_for_update
+  processed_rate: dsapi            # dsapi.osinfra.cn 支持周对比
+  skip_sigs: [Kernel]              # Kernel SIG 由 hulk_robot_test 独立处理
+  mail_subject_pr: openEuler 待处理PR汇总
+  mail_body_pr: 以下是您参与openEuler社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。
+  mail_subject_issue: openEuler 待处理Issue汇总
+  mail_body_issue: 以下是您参与openEuler社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。
+
+boostkit:
+  display_name: BoostKit
+  community_repo: https://gitcode.com/boostkit/community.git
+  orgs: [boostkit]
+  repo_source: sig_info            # 目录分片 yaml 滞后于 sig-info.yaml，以 sig-info.yaml 为准
+  data_source: gitcode_api         # 逐仓库调 GitCode API，需要 GITCODE_TOKEN
+  cla_label: boostkit-cla/yes
+  ci_failed_label: ''              # BoostKit CI 失败标签未知，暂不检测
+  wait_update_label: kind/wait_for_update
+  processed_rate: none             # dsapi 不支持 boostkit，跳过周对比
+  skip_sigs: []
+  mail_subject_pr: BoostKit 待处理PR汇总
+  mail_body_pr: 以下是您参与BoostKit社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。
+  mail_subject_issue: BoostKit 待处理Issue汇总
+  mail_body_issue: 以下是您参与BoostKit社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。
