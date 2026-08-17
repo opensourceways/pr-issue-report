@@ -3,17 +3,19 @@
 # Jenkins job script for openEuler PR/Issue statistics weekly report
 
 # Initialize or update git repository
+REPO_URL=https://github.com/opensourceways/pr-issue-report.git
+BRANCH=lei_dev
 if [[ ! -d .git ]]; then
     git init &> /dev/null
-    git remote add origin https://gitcode.com/lei0308/pr-statistics-report.git
+    git remote add origin "$REPO_URL"
     git config http.retry 2
-    git fetch --depth=1 origin migrate-to-gitcode || exit 1
-    git checkout migrate-to-gitcode
+    git fetch --depth=1 origin "$BRANCH" || exit 1
+    git checkout "$BRANCH"
 else
-    git remote set-url origin https://gitcode.com/lei0308/pr-statistics-report.git
+    git remote set-url origin "$REPO_URL"
     git config http.retry 2
     git fetch origin --recurse-submodules=no --progress --prune
-    git reset --hard origin/migrate-to-gitcode
+    git reset --hard "origin/$BRANCH"
 fi
 
 # Load Python 3.11 environment
