@@ -19,7 +19,7 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 
 两个脚本结构完全一致，仅 `COMMUNITY` 取值不同：
 
-1. **代码自更新**：job 工作区内 `git init/fetch/reset --hard` 到 `origin/migrate-to-gitcode` 分支（仓库：`https://gitcode.com/lei0308/pr-statistics-report.git`）。因此 Jenkins job 的构建步骤里**直接粘贴脚本全文**即可，不需要预先配置 SCM。
+1. **代码自更新**：job 工作区内 `git init/fetch/reset --hard` 到本项目（`https://github.com/opensourceways/pr-issue-report.git`）的 `lei_dev` 分支（脚本顶部 `REPO_URL`/`BRANCH` 两个变量控制）。因此 Jenkins job 的构建步骤里**直接粘贴脚本全文**即可，不需要预先配置 SCM。注意 Jenkins 节点需能访问 github.com。
 2. **Python 环境**:`source python3.11.env.sh`，在节点上建 `.venv`（python3.11 + requirements.txt）。依赖节点预装 python3.11；PyPI 走清华镜像（节点直连 PyPI 不通）。
 3. **运行统计**：依次 `python3 pr_statistics.py` 和 `python3 issue_statistics.py`。
 4. **DRY_RUN 时**：清理并重新生成 `<community>/test_output/`，打包为 `test_output.tar.gz` 供构建产物归档。
@@ -81,7 +81,7 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 - **某 SIG 整组缺失**：先看该 SIG 的 `sig-info.yaml` 是否存在且格式正确（BoostKit 以它为仓库清单来源，`repo_source: sig_info`）。
 - **某人收不到邮件**：按序排查——① 其 gitcode_id 是否在 `<community>/email_mapping.yaml` 中且邮箱非空；② `email_controls.yaml` 是否配置了退订；③ 日志中是否有 `does not match any email address` 警告（说明 sig-info.yaml 里没填邮箱）。
 - **GitCode API 报错/限流**：确认 `GITCODE_TOKEN` 有效；实测全量 320 次调用约 2 分钟，无 429。
-- **退订请求处理**：流程由代码决定——每封邮件底部带退订说明，`Reply-To` 指向 `email_reply_to`（默认 `huanglei227@h-partners.com`），用户直接回复邮件并注明退订类型。管理员收到回复后，编辑**仓库根目录**的 `email_controls.yaml`（语法见 README，可精确到 PR/Issue × Maintainer/Committer）。注意必须**提交到 `migrate-to-gitcode` 分支**才生效：job 每次构建都会 `git reset --hard`，工作区里的本地修改会被覆盖。改动随下一次定时构建生效。控制文件路径基于代码所在位置解析（`common.py` 同级），与运行时的社区子目录无关，也可用 `EMAIL_CONTROLS_PATH` 覆盖。
+- **退订请求处理**：流程由代码决定——每封邮件底部带退订说明，`Reply-To` 指向 `email_reply_to`（默认 `huanglei227@h-partners.com`），用户直接回复邮件并注明退订类型。管理员收到回复后，编辑**仓库根目录**的 `email_controls.yaml`（语法见 README，可精确到 PR/Issue × Maintainer/Committer）。注意必须**提交到 `lei_dev` 分支**才生效：job 每次构建都会 `git reset --hard` 到该分支，工作区里的本地修改会被覆盖。改动随下一次定时构建生效。控制文件路径基于代码所在位置解析（`common.py` 同级），与运行时的社区子目录无关，也可用 `EMAIL_CONTROLS_PATH` 覆盖。
 
 ## Docker 部署（备选）
 
