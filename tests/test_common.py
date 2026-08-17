@@ -876,9 +876,18 @@ class TestExpandControls:
 
 class TestLoadEmailControls:
     def test_missing_file_returns_default(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', str(tmp_path / 'nonexistent.yaml'))
         controls = load_email_controls()
         assert controls['anyone']['pr']['maintainer'] is True
+
+    def test_default_path_independent_of_cwd(self, tmp_path, monkeypatch):
+        """Default control file resolves to the repo root even after chdir."""
+        monkeypatch.delenv('EMAIL_CONTROLS_PATH', raising=False)
+        monkeypatch.chdir(tmp_path)
+        controls = load_email_controls()
+        # binaryzero-hyh is unsubscribed in the repo-root email_controls.yaml
+        assert controls['binaryzero-hyh']['pr']['maintainer'] is False
+        assert controls['binaryzero-hyh']['issue']['committer'] is False
 
     def test_loads_from_env_path(self, tmp_path, monkeypatch):
         controls_file = tmp_path / 'controls.yaml'
@@ -895,6 +904,48 @@ class TestLoadEmailControls:
         assert controls['bob']['issue']['maintainer'] is False
         assert controls['bob']['issue']['committer'] is False
         assert controls['bob']['pr']['maintainer'] is True
+
+    def test_community_override_replaces_base(self, tmp_path):
+        """communities.<name> completely overrides the base config for that community."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'carol:\n'
+            '  issue: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      all: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='boostkit')
+        assert controls['carol']['pr']['maintainer'] is False
+        assert controls['carol']['issue']['maintainer'] is False
+
+    def test_community_override_ignored_for_other_community(self, tmp_path):
+        """Overrides for other communities do not apply."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'carol:\n'
+            '  issue: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      all: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='openeuler')
+        assert controls['carol']['pr']['maintainer'] is True
+        assert controls['carol']['issue']['maintainer'] is False
+
+    def test_community_override_can_resubscribe(self, tmp_path):
+        """A community override can re-enable mail the base config disabled."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'dave:\n'
+            '  all: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      issue: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='boostkit')
+        assert controls['dave']['pr']['maintainer'] is True
+        assert controls['dave']['issue']['maintainer'] is False
 
 
 class TestShouldSend:
@@ -980,7 +1031,8 @@ class TestGetSigs:
 
         with patch('common.os.listdir', fake_listdir):
             with patch('common.os.walk', fake_walk):
-                sigs, sigs_list = get_sigs()
+                with patch('common.os.path.isdir', return_value=True):
+                    sigs, sigs_list = get_sigs()
 
         assert len(sigs) >= 2
         for s in sigs:

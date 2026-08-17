@@ -386,14 +386,15 @@ class TestMain:
     def test_main_runs(self, monkeypatch):
         """main() orchestrates prepare_env → get_sigs → compare → issues → stats."""
         calls = []
+        monkeypatch.setattr('issue_statistics.setup_community', lambda *a: {})
         monkeypatch.setattr('issue_statistics.prepare_env',
-                            lambda: calls.append('env') or '/tmp/data')
+                            lambda *a: calls.append('env') or '/tmp/data')
         monkeypatch.setattr('issue_statistics.get_sigs',
-                            lambda: (calls.append('sigs'), ([])))
+                            lambda *a: (calls.append('sigs'), ([])))
         monkeypatch.setattr('issue_statistics.all_sigs_compare',
-                            lambda s: calls.append('comp') or {})
+                            lambda *a: calls.append('comp') or {})
         monkeypatch.setattr('issue_statistics.get_repos_issues_mapping',
-                            lambda: calls.append('issues') or {})
+                            lambda *a: calls.append('issues') or {})
         monkeypatch.setattr('issue_statistics.os.path.exists', lambda p: False)
         monkeypatch.setattr('issue_statistics.issue_statistics',
                             lambda *a: calls.append('stats'))

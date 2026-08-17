@@ -16,11 +16,16 @@ from common import *
 # Issue data fetching
 # ---------------------------------------------------------------------------
 
-def get_repos_issues_mapping():
+def get_repos_issues_mapping(config=None, sigs=None):
     """
     Get mappings between repos and issues
+    :param config: community config dict (defaults to the active community)
+    :param sigs: sigs list from get_sigs(), required for the gitcode_api data source
     :return: a dict of {repo: issue_data}
     """
+    config = config or load_community_config()
+    if config.get('data_source') == 'gitcode_api':
+        return gitcode_open_items(sigs or [], 'issues')
     enterprise_issues = []
     page = 1
     while True:
@@ -48,13 +53,16 @@ def get_repos_issues_mapping():
 # Issue statistics
 # ---------------------------------------------------------------------------
 
-def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict):
+def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, config=None):
     """
     :param data_dir: directory to store temporary data
     :param sigs: a dict of every sig and its repositories
     :param repos_issues_mapping: mappings between repos and issues
     :param compare_dict: a dict of every sig and its compare info
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
+    orgs_lower = [org.lower() for org in config['orgs']]
     log.logger.info('=' * 25 + ' ISSUE STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
     test_mode = bool(test_email)
@@ -77,8 +85,8 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict):
     maintainer_set = set()
     for sig in sigs:
         sig_name = sig['name']
-        if sig_name == 'Kernel':
-            log.logger.info('Skipping Kernel SIG (handled by hulk_robot_test)')
+        if sig_name in (config.get('skip_sigs') or []):
+            log.logger.info('Skipping {} SIG (configured to skip)'.format(sig_name))
             continue
         sig_repos = sig['repositories']
         log.logger.info('\nStarting to search sig {} for issues'.format(sig_name))
@@ -88,7 +96,7 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict):
         for m in maintainers:
             maintainer_set.add(m)
         for full_repo in sig_repos:
-            if full_repo.split('/')[0] not in ['src-openeuler', 'openeuler']:
+            if full_repo.split('/')[0].lower() not in orgs_lower:
                 continue
             open_issue_list = []
             for mapping_key in repos_issues_mapping.keys():
@@ -222,8 +230,8 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict):
             continue
         actual_receivers = [redirect_email] if test_mode else [email_address]
         send_email('', receiver, actual_receivers,
-                   'openEuler 待处理Issue汇总',
-                   body_text='以下是您参与openEuler社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。',
+                   config['mail_subject_issue'],
+                   body_text=config['mail_body_issue'],
                    html_content=merged_html)
         email_sent_count += 1
         if test_mode:
@@ -240,12 +248,13 @@ def main():
     """
     main function for issue statistics
     """
-    data_dir = prepare_env()
-    sigs, sigs_list = get_sigs()
-    compare_dict = all_sigs_compare(sigs_list)
+    config = setup_community()
+    data_dir = prepare_env(config)
+    sigs, sigs_list = get_sigs(config)
+    compare_dict = all_sigs_compare(sigs_list, config)
     print('Compare Dict: {}'.format(compare_dict))
-    repos_issues_mapping = get_repos_issues_mapping()
-    issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict)
+    repos_issues_mapping = get_repos_issues_mapping(config, sigs)
+    issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, config)
 
 
 if __name__ == '__main__':

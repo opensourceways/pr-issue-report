@@ -469,10 +469,11 @@ class TestMain:
     def test_main_runs(self, monkeypatch):
         """main() calls all top-level functions in order."""
         calls = []
-        monkeypatch.setattr('pr_statistics.prepare_env', lambda: calls.append('env') or '/tmp/data')
-        monkeypatch.setattr('pr_statistics.get_sigs', lambda: (calls.append('sigs'), ([])))
-        monkeypatch.setattr('pr_statistics.all_sigs_compare', lambda s: calls.append('comp') or {})
-        monkeypatch.setattr('pr_statistics.get_repos_pulls_mapping', lambda: calls.append('pulls') or {})
+        monkeypatch.setattr('pr_statistics.setup_community', lambda *a: {})
+        monkeypatch.setattr('pr_statistics.prepare_env', lambda *a: calls.append('env') or '/tmp/data')
+        monkeypatch.setattr('pr_statistics.get_sigs', lambda *a: (calls.append('sigs'), ([])))
+        monkeypatch.setattr('pr_statistics.all_sigs_compare', lambda *a: calls.append('comp') or {})
+        monkeypatch.setattr('pr_statistics.get_repos_pulls_mapping', lambda *a: calls.append('pulls') or {})
         monkeypatch.setattr('pr_statistics.pr_statistics', lambda *a: calls.append('stats'))
         monkeypatch.setattr('pr_statistics.yaml', MagicMock())
 
