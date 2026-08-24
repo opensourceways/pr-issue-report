@@ -57,3 +57,9 @@ subin19:
 # hongxuming@huawei.com (sig-CloudNative committer)：完全退订所有汇总邮件
 hong-xuming:
   all: false
+
+# linzhengshu1@huawei.com (sig-intelligence committer)：退订 openEuler 社区所有汇总邮件
+dash0225:
+  communities:
+    openeuler:
+      all: false
