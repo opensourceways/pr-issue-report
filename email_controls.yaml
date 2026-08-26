@@ -69,3 +69,7 @@ barbo:
   communities:
     openeuler:
       issue: false
+
+# zhaoshujian@huawei.com (sig-Compiler committer)：完全退订所有汇总邮件
+zhaoshujian:
+  all: false
