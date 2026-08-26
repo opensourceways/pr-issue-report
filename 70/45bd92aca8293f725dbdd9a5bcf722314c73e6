@@ -1,0 +1,32 @@
+email_controls.yaml
+  s_55bc42e32b55d6::t_49d321c23339df 72-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "7045bd92aca8293f725dbdd9a5bcf722314c73e6",
+  "prompts": {},
+  "sessions": {
+    "s_55bc42e32b55d6": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a8b9af91b7bbd408fd61437",
+        "model": "glm-5.3"
+      },
+      "human_author": "huanglei0308 <1918563502@qq.com>",
+      "custom_attributes": {
+        "session_id": "6a8b9af91b7bbd408fd61437",
+        "tool_use_id": "6a8e47281b7bbd408fd6209a",
+        "edit_kind": "file_edit",
+        "tool_type": "builtin",
+        "external_session_id": "6a8b9af91b7bbd408fd61437",
+        "operation_id": "6a8e47281b7bbd408fd6209a",
+        "dedupe_key": "6a8b9af91b7bbd408fd61437:6a8e47281b7bbd408fd6209a:afterEdit:2479849f",
+        "runtime_client": "trae-tob-git-ai",
+        "tool_id": "icube:applyChatSnapshotPatch",
+        "client_type": "ide",
+        "source_scene": "agent"
+      }
+    }
+  }
+}
