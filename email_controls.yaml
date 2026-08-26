@@ -63,3 +63,9 @@ dash0225:
   communities:
     openeuler:
       all: false
+
+# hongrongxuan@huawei.com (sig-Compatibility-Infra committer)：退订 openEuler 社区 Issue 汇总邮件
+barbo:
+  communities:
+    openeuler:
+      issue: false
