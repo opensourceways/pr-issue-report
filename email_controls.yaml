@@ -73,3 +73,9 @@ barbo:
 # zhaoshujian@huawei.com (sig-Compiler committer)：完全退订所有汇总邮件
 zhaoshujian:
   all: false
+
+# wangbingquan@huawei.com (sig-DB committer)：退订 openEuler 社区所有汇总邮件
+wbq_sky:
+  communities:
+    openeuler:
+      all: false
