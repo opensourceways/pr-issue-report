@@ -79,3 +79,9 @@ wbq_sky:
   communities:
     openeuler:
       all: false
+
+# chenxin146@huawei.com (sig-UB-ServiceCore committer)：退订 openEuler 社区所有汇总邮件
+aevdark:
+  communities:
+    openeuler:
+      all: false
