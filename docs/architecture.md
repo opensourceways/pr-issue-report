@@ -73,7 +73,7 @@
 | Email mapping | `create_email_mappings()`、`get_email_mappings()` | 从 sig-info.yaml 提取 gitcode_id → 邮箱，生成 email_mapping.yaml |
 | Email controls | `MAIL_TYPES`、`load_email_controls()`、`should_send()`、`expand_controls()` | 退订/偏好过滤；邮件类型与角色登记在 `MAIL_TYPES`，新增类型改这里即可 |
 | Helpers | `fill_status()`、`sort_rows_by_sig_duration()`、`clean_env()` | 状态文案、报表行排序（SIG 升序 + 组内开启天数降序）、临时目录清理 |
-| Excel/HTML | `csv_to_xlsx()`、`excel_optimization()` | 报表生成：按 SIG 分组标题、开启天数着色（7/30/365 天三档）、异常状态标黄；可选 `extra_header`/`extra_fills` 追加一列（资料报表的「资料状态」列，默认不传即与周报完全一致） |
+| Excel/HTML | `csv_to_xlsx()`、`excel_optimization()`、`linkify_cells()` | 报表生成：按 SIG 分组标题、开启天数着色（7/30/365 天三档）、异常状态标黄；可选 `extra_header`/`extra_fills` 追加一列（资料报表的「资料状态」列，默认不传即与周报完全一致）。链接单元格（编号/标题）在导出前由 `linkify_cells()` 转成**真实 Excel 超链接**，见下 |
 | Email sending | `send_email()`、`merge_html_parts()`、`write_dry_run_html()` | SMTP 发送；合并 Maintainer/Committer 两部分；DRY_RUN 本地输出 |
 | Processed-rate | `all_sigs_compare()`、`compare_sig_processed_rate()` | dsapi 周对比；`processed_rate: none` 的社区直接返回空 |
 | GitCode API | `gitcode_open_items()`、`gitcode_fetch_repo_items()`、`adapt_gitcode_pr()`、`adapt_gitcode_issue()` | gitcode_api 数据源：逐仓库拉取并适配为内部格式 |
@@ -131,3 +131,4 @@
 - **BoostKit 私有仓库缺席**：约 49 个私有仓库对当前 token 也不可见，报表不含这些仓库的 PR/Issue；如需覆盖要给 token 账号加权限。
 - **处理率对比仅 openEuler**：dsapi.osinfra.cn 只支持 openEuler，BoostKit 报表对比行为空。
 - **资料汇总是社区级邮件**：内容对所有收件人相同，因此不像周报那样按人渲染，只做一次渲染 + 多收件人扇出；邮件控制在 `email_controls.yaml` 里以 `docs_pr` / `docs_issue` 两个类型、单一 `receiver` 角色表达。
+- **链接存成真实 Excel 超链接**：编号/标题单元格用 `cell.hyperlink` + 显示文本，而不是把 `<a href='...'>` 塞进单元格文本。后者只有在 `xlsx2html` 不转义单元格内容时才有效，而它自 0.6.4 起会转义——报表里就会显示成裸标签（`send_email()` 里曾有一段正则去还原，但 0.6.4 连引号一起转义，还原出来的 URL 是坏的）。现在两个版本导出的 HTML 逐字节一致，链接都可点，`requirements.txt` 因此只需要一条 `xlsx2html>=0.6.4` 下限（0.6.2 依赖已被 babel 2.18.0 删掉的 `number_re`，在全新环境里装不起来）。

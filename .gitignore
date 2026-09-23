@@ -14,6 +14,9 @@ statistics.log.*
 # Generated config
 email_mapping.yaml
 
+# DRY_RUN artifact, written at the repo root by jenkins_job_*.sh
+test_output.tar.gz
+
 # Python
 __pycache__/
 *.pyc

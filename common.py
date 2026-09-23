@@ -27,6 +27,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from logging import handlers
 from openpyxl.styles import Alignment, Border, PatternFill, Side, Font
+from openpyxl.worksheet.hyperlink import Hyperlink
 from xlsx2html import xlsx2html
 
 
@@ -536,6 +537,34 @@ def count_duration(start_time):
 # Excel / HTML generation
 # ---------------------------------------------------------------------------
 
+# Anchor mark-up the row builders put into the link cells, e.g.
+# "<a href='https://gitcode.com/<org>/<repo>/merge_requests/12'>#12</a>"
+LINK_CELL_RE = re.compile(r"^<a href=['\"]([^'\"]+)['\"]>(.*)</a>$", re.DOTALL)
+
+
+def linkify_cells(worksheet):
+    """
+    Convert anchor mark-up in cell values into real Excel hyperlinks.
+
+    The row builders fill the number/title cells with "<a href='url'>text</a>" strings.
+    Rendering those verbatim only ever worked because xlsx2html left cell text
+    unescaped; from 0.6.4 on it escapes them, so the reports showed the raw mark-up.
+    Storing the URL as a hyperlink and the text as the cell value instead makes both
+    old and new xlsx2html export a clickable <a> tag (and the xlsx itself gets a
+    working link).
+    :param worksheet: openpyxl worksheet, converted in place
+    """
+    for row in worksheet.rows:
+        for cell in row:
+            if not isinstance(cell.value, str):
+                continue
+            match = LINK_CELL_RE.match(cell.value)
+            if not match:
+                continue
+            cell.value = match.group(2)
+            cell.hyperlink = Hyperlink(ref=cell.coordinate, target=match.group(1))
+
+
 def csv_to_xlsx(filepath):
     """
     Convert a csv file to a xlsx file
@@ -673,6 +702,9 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     for row in ws.rows:
         for cell in row:
             cell.border = border
+    # last step on purpose: hyperlinks are keyed by cell coordinate, so they must be
+    # attached after all the column/row surgery above has moved the data into place
+    linkify_cells(ws)
     wb.save(filepath)
     wb.close()
     # generate html file by the xlsx file
@@ -712,8 +744,6 @@ def send_email(xlsx_file, nickname, receivers, subject='openEuler 待处理PR汇
     body_of_email = body_of_email.replace('<body>', '<body><p>Dear {},</p>'
                                                     '<p>{}</p>'.
                                           format(nickname, body_text))
-    # Fix xlsx2html escaping: restore <a> links so they render as clickable in email
-    body_of_email = re.sub(r'&lt;a (.+?)&gt;(.+?)&lt;/a&gt;', r'<a \1>\2</a>', body_of_email)
     content = MIMEText(body_of_email, 'html', 'utf-8')
     msg.attach(content)
     msg['Subject'] = subject

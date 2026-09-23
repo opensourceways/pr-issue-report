@@ -32,6 +32,7 @@ from common import (
     get_repo_members,
     get_sigs,
     get_user_id,
+    linkify_cells,
     load_email_controls,
     merge_html_parts,
     prepare_env,
@@ -456,6 +457,67 @@ class TestCsvToXlsx:
 
 
 # ---------------------------------------------------------------------------
+# linkify_cells
+# ---------------------------------------------------------------------------
+
+class TestLinkifyCells:
+    def _worksheet(self, values):
+        """Build a one-row worksheet holding the given cell values."""
+        import openpyxl
+        ws = openpyxl.Workbook().active
+        for idx, value in enumerate(values):
+            ws.cell(row=1, column=idx + 1, value=value)
+        return ws
+
+    def test_anchor_becomes_hyperlink(self):
+        """An anchor cell keeps its text and carries the URL as a real hyperlink."""
+        ws = self._worksheet(["<a href='https://gitcode.com/openeuler/x/pulls/1'>#1</a>"])
+        linkify_cells(ws)
+        assert ws['A1'].value == '#1'
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/1'
+
+    def test_double_quoted_anchor_also_matched(self):
+        """Both quote styles in the anchor mark-up are accepted."""
+        ws = self._worksheet(['<a href="https://gitcode.com/openeuler/x/pulls/2">#2</a>'])
+        linkify_cells(ws)
+        assert ws['A1'].value == '#2'
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/2'
+
+    def test_plain_cells_untouched(self):
+        """Cells without anchor mark-up keep their value and get no hyperlink."""
+        ws = self._worksheet(['sig-ai', 'openeuler/x', '待合入', 12, None])
+        linkify_cells(ws)
+        assert [c.value for c in ws[1]] == ['sig-ai', 'openeuler/x', '待合入', 12, None]
+        assert all(c.hyperlink is None for c in ws[1])
+
+    def test_title_with_apostrophe_keeps_full_text(self):
+        """An apostrophe inside the title does not truncate the display text."""
+        ws = self._worksheet(["<a href='https://gitcode.com/openeuler/x/pulls/3'>it's a fix</a>"])
+        linkify_cells(ws)
+        assert ws['A1'].value == "it's a fix"
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/3'
+
+    def test_partial_anchor_left_alone(self):
+        """Text that only looks like a link (extra content around it) is not converted."""
+        value = "see <a href='https://gitcode.com/openeuler/x/pulls/4'>#4</a> please"
+        ws = self._worksheet([value])
+        linkify_cells(ws)
+        assert ws['A1'].value == value
+        assert ws['A1'].hyperlink is None
+
+    def test_hyperlinks_survive_column_and_row_surgery(self):
+        """The cells that end up holding the links get them, not the coordinates they had before."""
+        import openpyxl
+        ws = openpyxl.Workbook().active
+        ws.append(['sig-ai', 'openeuler/x', 'main',
+                   "<a href='https://gitcode.com/openeuler/x/pulls/5'>#5</a>", '待合入', 3])
+        ws.delete_cols(1)
+        linkify_cells(ws)
+        assert ws['C1'].value == '#5'
+        assert ws['C1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/5'
+
+
+# ---------------------------------------------------------------------------
 # excel_optimization
 # ---------------------------------------------------------------------------
 
@@ -479,6 +541,24 @@ class TestExcelOptimization:
         assert os.path.exists(html)
         content = open(html, 'r', encoding='utf-8').read()
         assert len(content) > 0
+
+    def test_links_exported_as_clickable_anchors(self, tmp_path, compare_dict_sample):
+        """Link cells end up as real <a href> tags, not as escaped mark-up.
+
+        Guards the report's links against xlsx2html escaping cell text (it does from
+        0.6.4 on), which used to show recipients raw "<a href='...'>" strings.
+        """
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration\n'
+            'sig-ai,openeuler/ai-framework,main,'
+            "<a href='https://gitcode.com/openeuler/ai-framework/pulls/100'>#100</a>,"
+            "<a href='https://gitcode.com/openeuler/ai-framework/pulls/100'>Fix bug</a>,待合入,3\n"
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'link_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False)
+        content = open(xlsx.replace('.xlsx', '.html'), 'r', encoding='utf-8').read()
+        assert '<a href="https://gitcode.com/openeuler/ai-framework/pulls/100">#100</a>' in content
+        assert '&lt;a' not in content
 
     def test_issue_mode_generates_html(self, tmp_path, compare_dict_sample):
         """excel_optimization generates an HTML file for Issue layout."""
@@ -882,11 +962,14 @@ class TestSendEmail:
         # Should not raise
         send_email(str(xlsx), 'testuser', ['test@example.com'])
 
-    def test_link_escaping_fix(self, tmp_path, set_smtp_env, monkeypatch):
-        """xlsx2html &lt;a&gt; escaping is restored to real <a> links."""
+    def test_link_mark_up_is_not_rewritten(self, tmp_path, set_smtp_env, monkeypatch):
+        """send_email passes the report HTML through verbatim.
+
+        It used to un-escape link mark-up on the way out; links are real Excel
+        hyperlinks now (see linkify_cells), so it must not touch the body any more.
+        """
         html = tmp_path / 'test.html'
         xlsx = tmp_path / 'test.xlsx'
-        # Simulate xlsx2html output with escaped links
         html.write_text(
             '<html><body>&lt;a href="http://x"&gt;text&lt;/a&gt;</body></html>',
             encoding='utf-8'
@@ -899,12 +982,12 @@ class TestSendEmail:
         mock_smtp.__exit__ = MagicMock(return_value=False)
         monkeypatch.setattr('common.smtplib.SMTP_SSL', lambda host, port, timeout: mock_smtp)
         monkeypatch.setattr('common.MIMEMultipart', MagicMock())
+        bodies = []
+        monkeypatch.setattr('common.MIMEText',
+                            lambda body, subtype, charset: bodies.append(body) or MagicMock())
 
         send_email(str(xlsx), 'testuser', ['test@example.com'])
-        # Verify the body contains fixed <a> tags
-        # The MIMEText would have the fixed content
-        from common import MIMEText
-        # MIMEText was called with the fixed body
+        assert '&lt;a href="http://x"&gt;text&lt;/a&gt;' in bodies[0]
 
 
 # ---------------------------------------------------------------------------

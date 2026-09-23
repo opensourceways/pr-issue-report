@@ -18,8 +18,8 @@ Jenkins jobs: **`jenkins_job_openeuler.sh`** (openEuler), **`jenkins_job_boostki
 ### Local development
 
 ```bash
-# Install dependencies (system-level packages + pip)
-pip3 install requests openpyxl pandas PyYAML xlsx2html -i https://pypi.tuna.tsinghua.edu.cn/simple
+# Install dependencies (system-level packages + pip; pinned versions live in requirements.txt)
+pip3 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Run PR statistics report (default community: openEuler)
 python3 pr_statistics.py
@@ -58,7 +58,7 @@ docker run -e SMTP_USERNAME=... -e SMTP_PASSWORD=... -e SMTP_HOST=... -e SMTP_PO
 4. **`get_repos_pulls_mapping(config, sigs)`** — Two data sources depending on `config['data_source']`: `ipb` paginates `https://ipb.osinfra.cn/pulls?state=open`; `gitcode_api` calls the GitCode API per repo via `gitcode_open_items()` (403/404 repos are skipped with a warning). Returns `{repo/.../number: pull_data}`.
 5. **`get_maintainers()`** / **`get_committers_mapping()`** — Reads `OWNERS` or `sig-info.yaml` per SIG.
 6. **`pr_statistics(..., config)`** — Core logic: iterates SIGs → repos → open PRs, annotates each PR with status (draft, CLA failure, CI failure, merge conflict, waiting for update — labels come from the community config), groups by reviewer Gitee ID. Reviewers are always the union of SIG maintainers + repo committers. Per-reviewer CSV → XLSX → HTML → email.
-7. **Excel generation** — `csv_to_xlsx()` converts CSV, `excel_optimization()` applies color-coding (PR age severity, status flags), borders, grouped headers per SIG, and exports to HTML via `xlsx2html`.
+7. **Excel generation** — `csv_to_xlsx()` converts CSV, `excel_optimization()` applies color-coding (PR age severity, status flags), borders, grouped headers per SIG, and exports to HTML via `xlsx2html`. Number/title cells are turned into real Excel hyperlinks by `linkify_cells()` just before the export, so the links render as clickable anchors whichever `xlsx2html` version is installed (see docs/architecture.md §已知设计取舍).
 8. **`all_sigs_compare(sigs_list, config)`** — For communities with `processed_rate: dsapi`, calls `dsapi.osinfra.cn` via `compare_sig_processed_rate()` to compute week-over-week PR processing rate per SIG (displayed in report headers). Communities with `processed_rate: none` (BoostKit) skip this entirely and get empty compare info.
 9. **`send_email()`** — Reads the generated HTML, wraps it in an email body (subject/body from the community config), and sends via SMTP.
 
