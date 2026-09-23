@@ -5,6 +5,7 @@ data/
 # Per-community working directories
 /openeuler/
 /boostkit/
+/boostkit-docs/
 
 # Runtime logs
 statistics.log

@@ -32,3 +32,37 @@ boostkit:
   mail_body_pr: 以下是您参与BoostKit社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。
   mail_subject_issue: BoostKit 待处理Issue汇总
   mail_body_issue: 以下是您参与BoostKit社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。
+  # 资料相关汇总：社区级邮件（不按 reviewer 分发），发给资料经理名单，
+  # 由独立流水线 docs_statistics.py 处理（见 jenkins_job_boostkit_docs.sh）。
+  docs_report:
+    enabled: true
+    workdir: boostkit-docs        # 独立运行目录，可与 boostkit/ 的周报并行跑互不干扰
+    # 资料口径。注意：docs-ci-pipeline-* 是仓库级 CI 状态标签（配了资料流水线的仓库里
+    # 所有 PR 都会带），不是内容信号，绝不能用它过滤。
+    pr_labels: [need-doc-sig-review, doc-sig-reviewed, sig/doc, sig/Doc, ai-docs-only]
+    # PR 报表额外加一列展示资料标签状态，让收件人一眼看出哪些还需要处理
+    # （按下面的顺序匹配，命中第一个即用；未命中任何标签的留空）
+    status_header: 资料状态
+    status_labels:
+      doc-sig-reviewed:          # 资料 SIG 已评审通过 → 不需要处理
+        text: 资料已评审
+        color: C6EFCE            # 绿
+      need-doc-sig-review:       # 等待资料 SIG 评审 → 需要处理
+        text: 待资料评审
+        color: FFFF00            # 黄
+    issue_title_prefix: '[资料]:'  # Issue 标题前缀
+    issue_type: 资料               # 或 issue_type 为「资料」（与标题前缀取并集）
+    # 收件人：含 @ 的条目直接当邮箱用；否则当 gitcode_id，从 sig-info.yaml 的邮箱映射取。
+    # 这里统一直写邮箱，不依赖 sig-info 的邮箱映射（Doc SIG 的 sig-info 里赵聪邮箱是坏的，
+    # 且邮箱映射只覆盖 SIG 成员，改动也不够可控）。
+    receivers:
+      - gengxueping@huawei.com     # 耿雪萍（Doc SIG maintainer）
+      - weishengling@huawei.com    # 魏圣凌（Doc SIG maintainer）
+      - qiuqian6@huawei.com        # 邱仟（Doc SIG committer）
+      - weijinghan@huawei.com      # 魏婧涵（Doc SIG committer）
+      - zhaocong2@huawei.com       # 赵聪（Doc SIG committer，gitcode_id: congzhaohw）
+    nickname: BoostKit 资料经理     # 邮件开头的称呼
+    subject_pr: BoostKit 资料相关 PR 汇总
+    body_pr: 以下是 BoostKit 社区所有涉及资料变更的待处理 PR，烦请及时跟进。
+    subject_issue: BoostKit 资料相关 Issue 汇总
+    body_issue: 以下是 BoostKit 社区所有资料相关的待处理 Issue，烦请及时跟进。
