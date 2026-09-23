@@ -491,6 +491,41 @@ class TestExcelOptimization:
         html = xlsx.replace('.xlsx', '.html')
         assert os.path.exists(html)
 
+    def test_extra_column_appended_with_fills(self, tmp_path, compare_dict_sample):
+        """An extra trailing column is added with its header and value-based fills."""
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration,doc_status\n'
+            'sig-ai,openeuler/ai-framework,main,<a href="url">#100</a>,<a href="url">Fix</a>,待合入,3,待资料评审\n'
+            'sig-ai,openeuler/ai-models,main,<a href="url">#101</a>,<a href="url">Doc</a>,待合入,3,资料已评审\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'extra_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False, extra_header='资料状态',
+                           extra_fills={'待资料评审': 'FFFF00', '资料已评审': 'C6EFCE'})
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        values = [row[-1] for row in ws.iter_rows(values_only=True)]
+        assert '资料状态' in values                       # header row
+        assert '待资料评审' in values and '资料已评审' in values
+        fills = {c.value: c.fill.start_color.rgb for row in ws.iter_rows() for c in row
+                 if c.value in ('待资料评审', '资料已评审')}
+        assert fills == {'待资料评审': '00FFFF00', '资料已评审': '00C6EFCE'}
+
+    def test_duration_column_lookup_not_broken_by_extra_column(self, tmp_path, compare_dict_sample):
+        """The duration colouring still targets the duration column, not the extra one."""
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration,doc_status\n'
+            'sig-ai,openeuler/ai-framework,main,<a href="url">#100</a>,<a href="url">Fix</a>,待合入,40,待资料评审\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'duration_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False, extra_header='资料状态')
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        duration_cells = [c for row in ws.iter_rows() for c in row if c.value == 40]
+        assert len(duration_cells) == 1
+        assert duration_cells[0].fill.start_color.rgb == '00FF7F50'   # 开启天数 40 → 第二档
+
     def test_non_xlsx_returns_none(self, tmp_path, compare_dict_sample):
         """Passing a non-.xlsx path returns early."""
         result = excel_optimization('/some/file.txt', compare_dict_sample)

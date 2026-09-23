@@ -548,12 +548,15 @@ def csv_to_xlsx(filepath):
     return xlsx_filepath
 
 
-def excel_optimization(filepath, compare_dict, is_issue=False):
+def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None, extra_fills=None):
     """
     Adjust styles of the xlsx file
     :param filepath: path of the xlsx file
     :param compare_dict: a dict of every sig and its compare info
     :param is_issue: if True, skip the branch column (issues have no branch)
+    :param extra_header: optional header of one extra trailing column (the docs report uses it to
+                         show the documentation label state). Omitted means the layout is unchanged
+    :param extra_fills: optional {cell value: fill color} applied to that extra column
     """
     if not filepath.endswith('.xlsx'):
         return
@@ -572,7 +575,12 @@ def excel_optimization(filepath, compare_dict, is_issue=False):
     ws.delete_cols(1)
     ws.delete_cols(1)
     # insert rows
-    max_col = 5 if is_issue else 6
+    duration_col = 5 if is_issue else 6
+    max_col = duration_col + 1 if extra_header else duration_col
+    headers = ['仓库', '编号', '标题', '状态', '开启天数'] if is_issue else \
+        ['仓库', '目标分支', '编号', '标题', '状态', '开启天数']
+    if extra_header:
+        headers.append(extra_header)
     alignment_center = Alignment(horizontal='center', vertical='center')
     insert_count = 0
     for i in sorted(insert_rows.keys()):
@@ -596,36 +604,20 @@ def excel_optimization(filepath, compare_dict, is_issue=False):
 
         ws.insert_rows(i + 2)
         insert_count += 1
-        if is_issue:
-            ws['A' + str(i + 2)] = '仓库'
-            ws['B' + str(i + 2)] = '编号'
-            ws['C' + str(i + 2)] = '标题'
-            ws['D' + str(i + 2)] = '状态'
-            ws['E' + str(i + 2)] = '开启天数'
-            for col_letter in ('A', 'B', 'C', 'D', 'E'):
-                ws[col_letter + str(i + 2)].font = Font(bold=True)
-                ws[col_letter + str(i + 2)].alignment = alignment_center
-        else:
-            ws['A' + str(i + 2)] = '仓库'
-            ws['B' + str(i + 2)] = '目标分支'
-            ws['C' + str(i + 2)] = '编号'
-            ws['D' + str(i + 2)] = '标题'
-            ws['E' + str(i + 2)] = '状态'
-            ws['F' + str(i + 2)] = '开启天数'
-            for col_letter in ('A', 'B', 'C', 'D', 'E', 'F'):
-                ws[col_letter + str(i + 2)].font = Font(bold=True)
-                ws[col_letter + str(i + 2)].alignment = alignment_center
+        for idx, header in enumerate(headers):
+            cell = ws[chr(65 + idx) + str(i + 2)]
+            cell.value = header
+            cell.font = Font(bold=True)
+            cell.alignment = alignment_center
 
     # replace the original table header
     ws.insert_rows(5)
-    col_letters = ('A', 'B', 'C', 'D', 'E', 'F')
-    for idx, col in enumerate(col_letters):
-        if is_issue and col == 'F':
-            break
+    for idx in range(len(headers)):
+        col = chr(65 + idx)
         ws[col + '5'] = ws[col + '4'].value
     ws.delete_rows(4)
-    # fill for the Duration (last column)
-    cells = ws.iter_rows(min_row=3, min_col=max_col, max_col=max_col)
+    # fill for the Duration column
+    cells = ws.iter_rows(min_row=3, min_col=duration_col, max_col=duration_col)
     yellow_fill = PatternFill("solid", start_color='FFFF00')
     first_stage_fill = PatternFill('solid', start_color='FFDAB9')
     second_stage_fill = PatternFill('solid', start_color='FF7F50')
@@ -652,9 +644,17 @@ def excel_optimization(filepath, compare_dict, is_issue=False):
             continue
         else:
             j[0].fill = yellow_fill
-    # align center (last column = duration)
+    # fill for the extra column (e.g. the docs label state)
+    if extra_fills:
+        extra_cells = ws.iter_rows(min_row=3, min_col=max_col, max_col=max_col)
+        for row in extra_cells:
+            color = extra_fills.get(row[0].value)
+            if color:
+                row[0].fill = PatternFill('solid', start_color=color)
+    # align center (duration column and, when present, the extra column)
     for row in ws.rows:
-        row[max_col - 1].alignment = alignment_center
+        for col in range(duration_col - 1, max_col):
+            row[col].alignment = alignment_center
     # add borders
     border = Border(left=Side(border_style='thin', color='000000'),
                     right=Side(border_style='thin', color='000000'),
