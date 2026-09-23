@@ -14,6 +14,7 @@ import pytest
 from common import (
     Logger,
     Logger as log,
+    MAIL_TYPES,
     all_sigs_compare,
     cal_compare_timestamp,
     cal_sig_processed_rate,
@@ -909,6 +910,31 @@ class TestExpandControls:
         assert result['issue']['maintainer'] is True
         assert result['issue']['committer'] is False
 
+    def test_docs_types_default_to_true(self):
+        result = expand_controls(None)
+        assert result['docs_pr'] == {'receiver': True}
+        assert result['docs_issue'] == {'receiver': True}
+
+    def test_docs_type_false_only_affects_itself(self):
+        result = expand_controls({'docs_pr': False})
+        assert result['docs_pr']['receiver'] is False
+        assert result['docs_issue']['receiver'] is True
+        assert result['pr']['maintainer'] is True
+
+    def test_docs_role_control(self):
+        result = expand_controls({'docs_issue': {'receiver': False}})
+        assert result['docs_issue']['receiver'] is False
+        assert result['docs_pr']['receiver'] is True
+
+    def test_all_false_covers_docs_types(self):
+        result = expand_controls({'all': False})
+        assert result['docs_pr']['receiver'] is False
+        assert result['docs_issue']['receiver'] is False
+
+    def test_unknown_type_is_ignored(self):
+        result = expand_controls({'unknown_type': False})
+        assert set(result) == set(MAIL_TYPES)
+
 
 class TestLoadEmailControls:
     def test_missing_file_returns_default(self, tmp_path, monkeypatch):
@@ -1002,6 +1028,13 @@ class TestShouldSend:
         assert should_send(controls, 'alice', 'pr', 'maintainer') is False
         assert should_send(controls, 'alice', 'pr', 'committer') is True
 
+    def test_docs_types(self):
+        from collections import defaultdict
+        controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
+        controls['alice'] = expand_controls({'docs_pr': False})
+        assert should_send(controls, 'alice', 'docs_pr', 'receiver') is False
+        assert should_send(controls, 'alice', 'docs_issue', 'receiver') is True
+
 
 # ---------------------------------------------------------------------------
 # merge_html_parts / write_dry_run_html
@@ -1015,6 +1048,7 @@ class TestMergeHtmlParts:
         assert 'Part 1' in result
         assert 'Title 1' in result
         assert '退订' in result
+        assert '退订资料汇总' in result
 
     def test_two_parts(self, tmp_path):
         html1 = tmp_path / 'part1.html'

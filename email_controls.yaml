@@ -12,6 +12,10 @@
 #   username:
 #     issue: false       # 关闭整个 Issue 邮件
 #   username:
+#     docs_pr: false     # 关闭「资料相关 PR 汇总」（社区级资料邮件）
+#   username:
+#     docs_issue: false  # 关闭「资料相关 Issue 汇总」
+#   username:
 #     all: false         # 完全退订所有邮件
 #
 # 完整写法示例：
@@ -22,6 +26,13 @@
 #     issue:
 #       maintainer: true
 #       committer: true
+#
+# 资料邮件只发给 communities.yaml 里 docs_report.receivers 配的收件人，没有
+# maintainer/committer 之分，只有单一 receiver 角色：
+#   username:
+#     docs_pr:
+#       receiver: false
+# 收件人在配置里直接写邮箱时，本文件的键就写那个邮箱地址（例如 someone@huawei.com）。
 #
 # 按社区覆盖（可选，社区名见 communities.yaml）：
 #   username:

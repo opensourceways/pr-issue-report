@@ -106,16 +106,21 @@ def load_community_config(name=None):
     return config
 
 
-def setup_community():
+def setup_community(config=None, workdir=None):
     """
     Load the active community config and switch into its dedicated working directory.
     Each community gets its own folder containing community/, data/,
     email_mapping.yaml and statistics.log, so runs never interfere.
+    :param config: community config dict (defaults to the active community)
+    :param workdir: working directory name, defaults to the community name. Pipelines
+                    belonging to the same community can run side by side by passing
+                    their own directory (e.g. the docs report uses boostkit-docs/)
     :return: config dict
     """
-    config = load_community_config()
-    os.makedirs(config['name'], exist_ok=True)
-    os.chdir(config['name'])
+    config = config or load_community_config()
+    workdir = workdir or config['name']
+    os.makedirs(workdir, exist_ok=True)
+    os.chdir(workdir)
     log.rebind('statistics.log')
     log.logger.info('Community: {}, workdir: {}'.format(config['name'], os.getcwd()))
     return config
@@ -353,35 +358,40 @@ def get_email_mappings():
 # Email controls (unsubscribe / preference management)
 # ---------------------------------------------------------------------------
 
+# mail_type -> roles user can opt out of; register new mail types here
+MAIL_TYPES = {
+    'pr': ('maintainer', 'committer'),
+    'issue': ('maintainer', 'committer'),
+    'docs_pr': ('receiver',),
+    'docs_issue': ('receiver',),
+}
+
+
 def expand_controls(config):
     """
     Expand simplified control syntax into full nested structure.
     :param config: raw control config for a single user (dict, bool or None)
-    :return: dict with keys 'pr' and 'issue', each containing 'maintainer' and 'committer'
+    :return: dict {mail_type: {role: bool}} covering every type/role in MAIL_TYPES
     """
-    result = {
-        'pr': {'maintainer': True, 'committer': True},
-        'issue': {'maintainer': True, 'committer': True},
-    }
+    result = {mail_type: {role: True for role in roles} for mail_type, roles in MAIL_TYPES.items()}
     if config is False or config is None:
         return result
     if isinstance(config, dict) and config.get('all') is False:
-        result['pr']['maintainer'] = False
-        result['pr']['committer'] = False
-        result['issue']['maintainer'] = False
-        result['issue']['committer'] = False
+        for roles in result.values():
+            for role in roles:
+                roles[role] = False
         return result
     if not isinstance(config, dict):
         return result
-    for mail_type in ('pr', 'issue'):
+    for mail_type, roles in MAIL_TYPES.items():
         if mail_type not in config:
             continue
         value = config[mail_type]
         if value is False:
-            result[mail_type]['maintainer'] = False
-            result[mail_type]['committer'] = False
+            for role in roles:
+                result[mail_type][role] = False
         elif isinstance(value, dict):
-            for role in ('maintainer', 'committer'):
+            for role in roles:
                 if role in value:
                     result[mail_type][role] = bool(value[role])
     return result
@@ -432,8 +442,8 @@ def should_send(controls, gitee_id, mail_type, role):
     Check whether a user should receive a specific part of emails.
     :param controls: controls dict from load_email_controls()
     :param gitee_id: user gitee_id
-    :param mail_type: 'pr' or 'issue'
-    :param role: 'maintainer' or 'committer'
+    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue')
+    :param role: one of the roles registered for that mail type
     :return: bool
     """
     return controls[gitee_id][mail_type][role]
@@ -471,6 +481,7 @@ def merge_html_parts(parts, mail_type):
         '<b>{}</b>，并注明退订类型：<br>'
         '• 退订 PR 汇总<br>'
         '• 退订 Issue 汇总<br>'
+        '• 退订资料汇总（资料相关 PR / Issue）<br>'
         '• 只退订作为 Maintainer 的部分<br>'
         '• 只退订作为 Committer 的部分<br>'
         '• 完全退订所有邮件<br><br>'
@@ -484,7 +495,7 @@ def merge_html_parts(parts, mail_type):
 def write_dry_run_html(mail_type, gitee_id, html_content):
     """
     Write generated HTML to local test_output directory when DRY_RUN is enabled.
-    :param mail_type: 'pr' or 'issue'
+    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue')
     :param gitee_id: user gitee_id
     :param html_content: HTML string to write
     """
