@@ -37,6 +37,7 @@ from common import (
     send_email,
     should_send,
     single_sig_compare,
+    sort_rows_by_sig_duration,
     write_dry_run_html,
 )
 
@@ -380,6 +381,41 @@ class TestCleanEnv:
         monkeypatch.setattr('common.shutil.rmtree', lambda path, ignore_errors=False: calls.append(path))
         clean_env('data')
         assert 'data' in calls
+
+
+class TestSortRowsBySigDuration:
+    def test_sig_ascending_and_duration_descending(self):
+        rows = [
+            ['sig-b', 'repo', '#3', 'title', 'status', '5'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '1'],
+            ['sig-b', 'repo', '#1', 'title', 'status', '30'],
+            ['sig-a', 'repo', '#4', 'title', 'status', '9'],
+        ]
+        assert sort_rows_by_sig_duration(rows, 5) == [
+            ['sig-a', 'repo', '#4', 'title', 'status', '9'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '1'],
+            ['sig-b', 'repo', '#1', 'title', 'status', '30'],
+            ['sig-b', 'repo', '#3', 'title', 'status', '5'],
+        ]
+
+    def test_same_duration_keeps_input_order(self):
+        rows = [
+            ['sig-a', 'repo', '#1', 'title', 'status', '7'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '7'],
+        ]
+        assert [r[2] for r in sort_rows_by_sig_duration(rows, 5)] == ['#1', '#2']
+
+    def test_empty_duration_is_treated_as_zero(self):
+        rows = [
+            ['sig-a', 'repo', '#1', 'title', 'status', ''],
+            ['sig-a', 'repo', '#2', 'title', 'status', '3'],
+        ]
+        assert [r[2] for r in sort_rows_by_sig_duration(rows, 5)] == ['#2', '#1']
+
+    def test_does_not_mutate_input(self):
+        rows = [['sig-a', 'repo', '#1', 'title', 'status', '1']]
+        sort_rows_by_sig_duration(rows, 5)
+        assert rows == [['sig-a', 'repo', '#1', 'title', 'status', '1']]
 
 
 # ---------------------------------------------------------------------------

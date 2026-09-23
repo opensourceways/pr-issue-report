@@ -732,6 +732,16 @@ def fill_status(status, insert_string):
     return status
 
 
+def sort_rows_by_sig_duration(rows, duration_col):
+    """
+    Order report rows by sig name (ascending) and, inside each sig, by open days (descending).
+    :param rows: report rows, the first column holds the sig name and duration_col holds open days
+    :param duration_col: index of the open-days column
+    :return: a new ordered list
+    """
+    return sorted(rows, key=(lambda r: (r[0], -(int(r[duration_col]) if r[duration_col] else 0))))
+
+
 def clean_env(data_dir):
     """
     Remove the temporary data

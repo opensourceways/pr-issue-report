@@ -190,17 +190,7 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config=None
         if not email_address:
             log.logger.warning('Ready to generate {} statistics for {} but cannot find the email address'.format(role, receiver))
             return False
-        ordered = sorted(pr_list, key=(lambda x: int(x[6])), reverse=True)
-        ordered_pr_list = []
-        pr_sigs = sorted(set([x[0] for x in ordered]))
-        for pr_sig in pr_sigs:
-            for op in ordered:
-                if op[0] == pr_sig:
-                    if len(ordered_pr_list) > 0 and op[0] == ordered_pr_list[-1][0] and int(op[-1]) > \
-                            int(ordered_pr_list[-1][-1]):
-                        ordered_pr_list.insert(-1, op)
-                    else:
-                        ordered_pr_list.append(op)
+        ordered_pr_list = sort_rows_by_sig_duration(pr_list, 6)
         csv_path = '{}/statistics_{}_{}.csv'.format(data_dir, receiver, role)
         html_path = write_csv_and_html(ordered_pr_list, csv_path, compare_dict)
         log.logger.info('Ready to generate {} statistics for {} whose email address is {}'.format(role, receiver, email_address))

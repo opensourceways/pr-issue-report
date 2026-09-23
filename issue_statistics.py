@@ -181,17 +181,7 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, config=
         if not email_address:
             log.logger.warning('Ready to generate {} issue stats for {} but cannot find email'.format(role, receiver))
             return False
-        ordered = sorted(issue_list, key=(lambda x: int(x[5]) if x[5] else 0), reverse=True)
-        ordered_issue_list = []
-        issue_sigs = sorted(set([x[0] for x in ordered]))
-        for issue_sig in issue_sigs:
-            for op in ordered:
-                if op[0] == issue_sig:
-                    if len(ordered_issue_list) > 0 and op[0] == ordered_issue_list[-1][0] and int(op[-1]) > \
-                            int(ordered_issue_list[-1][-1]):
-                        ordered_issue_list.insert(-1, op)
-                    else:
-                        ordered_issue_list.append(op)
+        ordered_issue_list = sort_rows_by_sig_duration(issue_list, 5)
         csv_path = '{}/issue_statistics_{}_{}.csv'.format(data_dir, receiver, role)
         html_path = write_csv_and_html(ordered_issue_list, csv_path, compare_dict)
         log.logger.info('Ready to generate {} issue stats for {}: {}'.format(role, receiver, email_address))
