@@ -366,6 +366,10 @@ MAIL_TYPES = {
     'docs_issue': ('receiver',),
 }
 
+# community wide report types (see docs_statistics.py); the unsubscribe note lists their
+# own option only in these mails, so the weekly mails keep their wording unchanged
+DOCS_MAIL_TYPES = ('docs_pr', 'docs_issue')
+
 
 def expand_controls(config):
     """
@@ -475,19 +479,25 @@ def merge_html_parts(parts, mail_type):
     for title, body in bodies:
         merged_body += '<h3 style="margin-top:30px">{}</h3>\n{}'.format(title, body)
     reply_to = os.getenv('email_reply_to', 'huanglei227@h-partners.com').strip()
+    unsubscribe_options = [
+        '• 退订 PR 汇总<br>',
+        '• 退订 Issue 汇总<br>',
+    ]
+    if mail_type in DOCS_MAIL_TYPES:
+        unsubscribe_options.append('• 退订资料汇总（资料相关 PR / Issue）<br>')
+    unsubscribe_options += [
+        '• 只退订作为 Maintainer 的部分<br>',
+        '• 只退订作为 Committer 的部分<br>',
+        '• 完全退订所有邮件<br><br>',
+    ]
     unsubscribe_note = (
         '<p style="font-size:12px;color:#666;">'
         '如需退订，请直接回复本邮件，或发送邮件至 '
         '<b>{}</b>，并注明退订类型：<br>'
-        '• 退订 PR 汇总<br>'
-        '• 退订 Issue 汇总<br>'
-        '• 退订资料汇总（资料相关 PR / Issue）<br>'
-        '• 只退订作为 Maintainer 的部分<br>'
-        '• 只退订作为 Committer 的部分<br>'
-        '• 完全退订所有邮件<br><br>'
+        '{}'
         '管理员将在 1-2 个工作日内处理。'
         '</p>'
-    ).format(reply_to)
+    ).format(reply_to, ''.join(unsubscribe_options))
     merged_body += unsubscribe_note
     return '<html><body>{}</body></html>'.format(merged_body)
 

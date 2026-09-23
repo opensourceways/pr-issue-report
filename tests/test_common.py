@@ -1083,7 +1083,15 @@ class TestMergeHtmlParts:
         assert 'Part 1' in result
         assert 'Title 1' in result
         assert '退订' in result
+        # the weekly mails keep their wording: no docs option is listed there
+        assert '退订资料汇总' not in result
+
+    def test_docs_mail_lists_docs_unsubscribe_option(self, tmp_path):
+        html = tmp_path / 'part1.html'
+        html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html))], 'docs_pr')
         assert '退订资料汇总' in result
+        assert '退订 PR 汇总' in result
 
     def test_two_parts(self, tmp_path):
         html1 = tmp_path / 'part1.html'
