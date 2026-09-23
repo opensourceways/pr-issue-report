@@ -37,7 +37,7 @@ def _config(**docs_overrides):
             'need-doc-sig-review': {'text': '待资料评审', 'color': 'FFFF00'},
         },
         'receivers': ['maintainer1'],
-        'nickname': '资料经理',
+        'nickname': 'BoostKit 资料管理员',
         'subject_pr': '资料相关 PR 汇总',
         'body_pr': 'PR 正文',
         'subject_issue': '资料相关 Issue 汇总',

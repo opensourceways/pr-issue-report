@@ -15,7 +15,8 @@ statistics.log.*
 email_mapping.yaml
 
 # DRY_RUN artifact, written at the repo root by jenkins_job_*.sh
-test_output.tar.gz
+# (the download suffix, e.g. "test_output (1).tar.gz", is covered too)
+test_output*.tar.gz
 
 # Python
 __pycache__/

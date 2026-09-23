@@ -6,7 +6,7 @@
 
 每周定时统计社区（openEuler / BoostKit）的待处理 PR 和 Issue，按 SIG → 仓库 → reviewer（maintainer/committer）归属，为每位 reviewer 生成一份个性化 HTML 报表，通过邮件发送，督促处理积压。
 
-在此基础上还有一条**社区级**的「资料汇总」流水线（`docs_statistics.py`）：同样抓取全社区待处理项，但过滤出资料相关的部分，按 SIG 分组后发给固定的资料经理名单，不做 reviewer 归属。
+在此基础上还有一条**社区级**的「资料汇总」流水线（`docs_statistics.py`）：同样抓取全社区待处理项，但过滤出资料相关的部分，按 SIG 分组后发给固定的资料相关收件人名单，不做 reviewer 归属。
 
 ## 总体数据流
 

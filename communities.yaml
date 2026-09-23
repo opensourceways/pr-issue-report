@@ -32,7 +32,7 @@ boostkit:
   mail_body_pr: 以下是您参与BoostKit社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。
   mail_subject_issue: BoostKit 待处理Issue汇总
   mail_body_issue: 以下是您参与BoostKit社区的待处理Issue汇总，不同部分代表您在不同角色下需要关注的Issue。
-  # 资料相关汇总：社区级邮件（不按 reviewer 分发），发给资料经理名单，
+  # 资料相关汇总：社区级邮件（不按 reviewer 分发），发给资料相关的固定收件人名单，
   # 由独立流水线 docs_statistics.py 处理（见 jenkins_job_boostkit_docs.sh）。
   docs_report:
     enabled: true
@@ -61,7 +61,12 @@ boostkit:
       - qiuqian6@huawei.com        # 邱仟（Doc SIG committer）
       - weijinghan@huawei.com      # 魏婧涵（Doc SIG committer）
       - zhaocong2@huawei.com       # 赵聪（Doc SIG committer，gitcode_id: congzhaohw）
-    nickname: BoostKit 资料经理     # 邮件开头的称呼
+      # h-partners 侧
+      - gongzhenan@h-partners.com
+      - luoqingmei2@h-partners.com
+      - weiyangchun5@h-partners.com
+      - zhangshuyi25@h-partners.com
+    nickname: BoostKit 资料管理员   # 邮件开头的称呼（收件人不都是资料负责人，用中性称呼）
     subject_pr: BoostKit 资料相关 PR 汇总
     body_pr: 以下是 BoostKit 社区所有涉及资料变更的待处理 PR，烦请及时跟进。
     subject_issue: BoostKit 资料相关 Issue 汇总

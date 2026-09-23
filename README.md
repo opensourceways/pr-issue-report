@@ -2,7 +2,7 @@
 
 每周定时统计 openEuler / BoostKit 社区的待处理 PR 和 Issue，按 maintainer/committer 分组，生成报表邮件发送。目标社区由 `COMMUNITY` 环境变量选择（见「多社区支持」）。
 
-另有「资料汇总」流水线：把全社区**资料相关**（文档）的待处理 PR / Issue 汇总成两封社区级邮件，直接发给资料经理名单，不按 maintainer/committer 分发。入口是 `docs_statistics.py`。
+另有「资料汇总」流水线：把全社区**资料相关**（文档）的待处理 PR / Issue 汇总成两封社区级邮件，直接发给资料相关的固定收件人名单，不按 maintainer/committer 分发。入口是 `docs_statistics.py`。
 
 ## 项目结构
 
@@ -10,7 +10,7 @@
 ├── common.py                # 共享基础设施（日志、SIG解析、邮件映射、Excel生成、SMTP、GitCode API）
 ├── pr_statistics.py         # PR 统计入口
 ├── issue_statistics.py      # Issue 统计入口
-├── docs_statistics.py       # 资料汇总入口（社区级，发资料经理）
+├── docs_statistics.py       # 资料汇总入口（社区级，发资料相关收件人）
 ├── communities.yaml         # 多社区配置（openeuler / boostkit）
 ├── email_controls.yaml      # 邮件接收偏好控制文件
 ├── jenkins_job_openeuler.sh # openEuler 周报 Jenkins 脚本
