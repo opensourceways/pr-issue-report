@@ -16,11 +16,16 @@ from common import *
 # PR data fetching
 # ---------------------------------------------------------------------------
 
-def get_repos_pulls_mapping():
+def get_repos_pulls_mapping(config=None, sigs=None):
     """
     Get mappings between repos and pulls
+    :param config: community config dict (defaults to the active community)
+    :param sigs: sigs list from get_sigs(), required for the gitcode_api data source
     :return: a dict of {repo: pulls}
     """
+    config = config or load_community_config()
+    if config.get('data_source') == 'gitcode_api':
+        return gitcode_open_items(sigs or [], 'pulls')
     enterprise_pulls = []
     page = 1
     while True:
@@ -48,31 +53,43 @@ def get_repos_pulls_mapping():
 # PR statistics
 # ---------------------------------------------------------------------------
 
-def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, whitelist_active=False):
+def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config=None):
     """
     :param data_dir: directory to store temporary data
     :param sigs: a dict of every sig and its repositories
     :param repos_pulls_mapping: mappings between repos and pulls
     :param compare_dict: a dict of every sig and its compare info
-    :param whitelist: a list of gitee_ids allowed to receive emails
-    :param whitelist_active: whether whitelist filtering is enabled
+    :param config: community config dict (defaults to the active community)
     """
+    config = config or load_community_config()
+    cla_label = config.get('cla_label')
+    ci_failed_label = config.get('ci_failed_label')
+    wait_update_label = config.get('wait_update_label')
+    orgs_lower = [org.lower() for org in config['orgs']]
     log.logger.info('=' * 25 + ' STATISTICS ' + '=' * 25)
     test_email = os.getenv('test_reviever_email', '').strip()
     test_mode = bool(test_email)
+    redirect_email = test_email
+    dry_run = os.getenv('DRY_RUN', '').strip().lower() == 'true'
+    test_user = os.getenv('TEST_USER', '').strip()
     if test_mode:
-        log.logger.info('[TEST MODE] All emails will be sent to {}, max 3 emails'.format(test_email))
+        log.logger.info('[TEST MODE] All emails will be sent to {}, max 3 emails'.format(redirect_email))
+    if dry_run:
+        log.logger.info('[DRY RUN] Emails will be generated locally in test_output/, not sent')
+    if test_user:
+        log.logger.info('[TEST USER] Only processing user: {}'.format(test_user))
     MAX_EMAILS = 3
     email_mappings = get_email_mappings()
     mapping_lists = sorted(list(email_mappings.keys()))
+    controls = load_email_controls()
     maintainer_pr_dict = {}
     committer_pr_dict = {}
     open_pr_info = []
     maintainer_set = set()
     for sig in sigs:
         sig_name = sig['name']
-        if sig_name == 'Kernel':
-            log.logger.info('Skipping Kernel SIG (handled by hulk_robot_test)')
+        if sig_name in (config.get('skip_sigs') or []):
+            log.logger.info('Skipping {} SIG (configured to skip)'.format(sig_name))
             continue
         sig_repos = sig['repositories']
         log.logger.info('\nStarting to search sig {}'.format(sig_name))
@@ -83,7 +100,7 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
         for m in maintainers:
             maintainer_set.add(m)
         for full_repo in sig_repos:
-            if full_repo.split('/')[0] not in ['src-openeuler', 'openeuler']:
+            if full_repo.split('/')[0].lower() not in orgs_lower:
                 continue
             open_pr_list = []
             for mapping_key in repos_pulls_mapping.keys():
@@ -107,13 +124,13 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
                 status = '待合入'
                 if draft:
                     status = fill_status(status, '草稿')
-                if 'openeuler-cla/yes' not in labels:
+                if cla_label and cla_label not in labels:
                     status = fill_status(status, 'CLA认证失败')
-                if 'ci_failed' in labels:
+                if ci_failed_label and ci_failed_label in labels:
                     status = fill_status(status, '门禁检查失败')
                 if not item['mergeable']:
                     status = fill_status(status, '存在冲突')
-                if 'kind/wait_for_update' in labels:
+                if wait_update_label and wait_update_label in labels:
                     status = fill_status(status, '等待更新')
                 duration = count_duration(created_at)
                 link = "<a href='{0}'>{1}</a>".format(html_url, title)
@@ -152,14 +169,6 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
             else:
                 committer_pr_dict[cid].append(pr_row)
 
-    # Move committer entries for maintainers into a separate dict,
-    # so they get one email with two tables instead of two emails.
-    committer_extras = {}
-    for cid in list(committer_pr_dict.keys()):
-        if cid in maintainer_pr_dict:
-            committer_extras[cid] = committer_pr_dict[cid]
-            del committer_pr_dict[cid]
-
     email_sent_count = 0
 
     def write_csv_and_html(pr_list, csv_path, compare_dict):
@@ -173,80 +182,59 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, 
         excel_optimization(xlsx_path, compare_dict)
         return xlsx_path.replace('.xlsx', '.html')
 
-    def send_pr_email(pr_list, receiver, role, compare_dict):
-        nonlocal email_sent_count
-        if not test_mode and role == 'maintainer' and whitelist_active and receiver not in whitelist:
-            log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
-            return False
+    def generate_pr_html(pr_list, receiver, role, compare_dict):
+        """Generate HTML report for a user and role, return HTML file path or False"""
         if not pr_list:
             return False
         email_address = email_mappings.get(receiver)
         if not email_address:
-            log.logger.warning('Ready to send {} statistics for {} but cannot find the email address'.format(role, receiver))
+            log.logger.warning('Ready to generate {} statistics for {} but cannot find the email address'.format(role, receiver))
             return False
-        ordered = sorted(pr_list, key=(lambda x: int(x[6])), reverse=True)
-        ordered_pr_list = []
-        pr_sigs = sorted(set([x[0] for x in ordered]))
-        for pr_sig in pr_sigs:
-            for op in ordered:
-                if op[0] == pr_sig:
-                    if len(ordered_pr_list) > 0 and op[0] == ordered_pr_list[-1][0] and int(op[-1]) > \
-                            int(ordered_pr_list[-1][-1]):
-                        ordered_pr_list.insert(-1, op)
-                    else:
-                        ordered_pr_list.append(op)
+        ordered_pr_list = sort_rows_by_sig_duration(pr_list, 6)
         csv_path = '{}/statistics_{}_{}.csv'.format(data_dir, receiver, role)
         html_path = write_csv_and_html(ordered_pr_list, csv_path, compare_dict)
-        log.logger.info('Ready to send {} statistics for {} whose email address is {}'.format(role, receiver, email_address))
+        log.logger.info('Ready to generate {} statistics for {} whose email address is {}'.format(role, receiver, email_address))
         return html_path
 
-    for receiver in sorted(maintainer_pr_dict.keys()):
-        if test_mode:
-            if email_sent_count >= MAX_EMAILS:
-                break
-        elif whitelist_active and receiver not in whitelist:
-            log.logger.info('Maintainer {} not in whitelist, skipping email'.format(receiver))
+    all_receivers = set(maintainer_pr_dict.keys()) | set(committer_pr_dict.keys())
+    for receiver in sorted(all_receivers):
+        if test_user and receiver != test_user:
             continue
-        html_m = send_pr_email(maintainer_pr_dict[receiver], receiver, 'maintainer', compare_dict)
-        if not html_m:
-            continue
-        email_address = email_mappings.get(receiver)
-        # Check for committer extras
-        extra_list = committer_extras.get(receiver, [])
-        html_c = send_pr_email(extra_list, receiver, 'committer', compare_dict)
-        if html_c:
-            # Merge maintainer + committer HTML into one email
-            with open(html_m, 'r', encoding='utf-8') as f:
-                body_m = f.read()
-            with open(html_c, 'r', encoding='utf-8') as f:
-                body_c = f.read()
-            body_combined = body_m.replace('</body>',
-                                           '<h3 style="margin-top:30px">作为 Committer 的 PR</h3>' + body_c.split('<body>')[1].split('</body>')[0] + '</body>')
-            with open(html_m, 'w', encoding='utf-8') as f:
-                f.write(body_combined)
-        actual_receivers = [test_email] if test_mode else [email_address]
-        send_email(html_m.replace('.html', '.xlsx'), receiver, actual_receivers,
-                   'openEuler 待处理PR汇总')
-        email_sent_count += 1
-        if test_mode:
-            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
-        else:
-            log.logger.info('Email {} sent to {}'.format(email_sent_count, email_address))
-
-    for receiver in sorted(committer_pr_dict.keys()):
-        if test_mode:
-            if email_sent_count >= MAX_EMAILS:
-                break
-        html_c = send_pr_email(committer_pr_dict[receiver], receiver, 'committer', compare_dict)
-        if not html_c:
+        if test_mode and email_sent_count >= MAX_EMAILS:
+            break
+        want_maintainer = receiver in maintainer_pr_dict and should_send(controls, receiver, 'pr', 'maintainer')
+        want_committer = receiver in committer_pr_dict and should_send(controls, receiver, 'pr', 'committer')
+        if not want_maintainer and not want_committer:
+            log.logger.info('Skipping PR email for {} due to controls'.format(receiver))
             continue
         email_address = email_mappings.get(receiver)
-        actual_receivers = [test_email] if test_mode else [email_address]
-        send_email(html_c.replace('.html', '.xlsx'), receiver, actual_receivers,
-                   'openEuler 待处理PR汇总（Committer）')
+        if not email_address:
+            log.logger.warning('Cannot find email address for {}, skipping'.format(receiver))
+            continue
+        html_parts = []
+        if want_maintainer:
+            html_m = generate_pr_html(maintainer_pr_dict[receiver], receiver, 'maintainer', compare_dict)
+            if html_m:
+                html_parts.append(('您作为 Maintainer 需要关注的 PR', html_m))
+        if want_committer:
+            html_c = generate_pr_html(committer_pr_dict[receiver], receiver, 'committer', compare_dict)
+            if html_c:
+                html_parts.append(('您作为 Committer 需要关注的 PR', html_c))
+        if not html_parts:
+            continue
+        merged_html = merge_html_parts(html_parts, 'pr')
+        if dry_run:
+            write_dry_run_html('pr', receiver, merged_html)
+            email_sent_count += 1
+            continue
+        actual_receivers = [redirect_email] if test_mode else [email_address]
+        send_email('', receiver, actual_receivers,
+                   config['mail_subject_pr'],
+                   body_text=config['mail_body_pr'],
+                   html_content=merged_html)
         email_sent_count += 1
         if test_mode:
-            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, test_email))
+            log.logger.info('[TEST MODE] Email {} of {} sent to {}'.format(email_sent_count, MAX_EMAILS, redirect_email))
         else:
             log.logger.info('Email {} sent to {}'.format(email_sent_count, email_address))
 
@@ -259,16 +247,13 @@ def main():
     """
     main function
     """
-    data_dir = prepare_env()
-    sigs, sigs_list = get_sigs()
-    compare_dict = all_sigs_compare(sigs_list)
+    config = setup_community()
+    data_dir = prepare_env(config)
+    sigs, sigs_list = get_sigs(config)
+    compare_dict = all_sigs_compare(sigs_list, config)
     print('Compare Dict: {}'.format(compare_dict))
-    repos_pulls_mapping = get_repos_pulls_mapping()
-    whitelist_active = os.path.exists('email_whitelist.yaml')
-    whitelist = []
-    if whitelist_active:
-        whitelist = yaml.safe_load(open('email_whitelist.yaml', 'r').read()) or []
-    pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, whitelist, whitelist_active)
+    repos_pulls_mapping = get_repos_pulls_mapping(config, sigs)
+    pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config)
 
 
 if __name__ == '__main__':

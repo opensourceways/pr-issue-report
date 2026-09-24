@@ -1,0 +1,98 @@
+# email_controls.yaml
+# 邮件接收偏好控制文件
+#
+# 说明：
+# - 不在本文件中的用户，默认接收所有邮件和所有角色部分。
+# - 每个字段为布尔值：true 表示接收，false 表示不接收。
+# - 可以只声明需要关闭的部分，未声明的默认按 true 处理。
+#
+# 支持简化写法：
+#   username:
+#     pr: false          # 关闭整个 PR 邮件
+#   username:
+#     issue: false       # 关闭整个 Issue 邮件
+#   username:
+#     docs_pr: false     # 关闭「资料相关 PR 汇总」（社区级资料邮件）
+#   username:
+#     docs_issue: false  # 关闭「资料相关 Issue 汇总」
+#   username:
+#     all: false         # 完全退订所有邮件
+#
+# 完整写法示例：
+#   username:
+#     pr:
+#       maintainer: false
+#       committer: true
+#     issue:
+#       maintainer: true
+#       committer: true
+#
+# 资料邮件只发给 communities.yaml 里 docs_report.receivers 配的收件人，没有
+# maintainer/committer 之分，只有单一 receiver 角色：
+#   username:
+#     docs_pr:
+#       receiver: false
+# 收件人在配置里直接写邮箱时，本文件的键就写那个邮箱地址（例如 someone@huawei.com）。
+#
+# 按社区覆盖（可选，社区名见 communities.yaml）：
+#   username:
+#     issue: false       # 基础配置：对所有社区生效
+#     communities:
+#       boostkit:
+#         all: false     # boostkit 社区完全退订；
+#                        # 该社区的配置整体覆盖基础配置，未声明的部分默认接收
+
+# 示例用户（请根据实际退订需求修改）
+# zhangsan:
+#   pr:
+#     maintainer: false
+#     committer: true
+#   issue:
+#     maintainer: true
+#     committer: true
+
+# lisi:
+#   issue: false
+
+# wangwu:
+#   all: false
+
+# huyuhan9@huawei.com (sig-intelligence committer)：完全退订所有汇总邮件
+binaryzero-hyh:
+  all: false
+
+# subin19@huawei.com (sig-HPC committer)：完全退订所有汇总邮件
+su-bin:
+  all: false
+
+# hongxuming@huawei.com (sig-CloudNative committer)：完全退订所有汇总邮件
+hong-xuming:
+  all: false
+
+# linzhengshu1@huawei.com (sig-intelligence committer)：退订 openEuler 社区所有汇总邮件
+dash0225:
+  communities:
+    openeuler:
+      all: false
+
+# hongrongxuan@huawei.com (sig-Compatibility-Infra committer)：退订 openEuler 社区 Issue 汇总邮件
+barbo:
+  communities:
+    openeuler:
+      issue: false
+
+# zhaoshujian@huawei.com (sig-Compiler committer)：完全退订所有汇总邮件
+zhaoshujian:
+  all: false
+
+# wangbingquan@huawei.com (sig-DB committer)：退订 openEuler 社区所有汇总邮件
+wbq_sky:
+  communities:
+    openeuler:
+      all: false
+
+# chenxin146@huawei.com (sig-UB-ServiceCore committer)：退订 openEuler 社区所有汇总邮件
+aevdark:
+  communities:
+    openeuler:
+      all: false

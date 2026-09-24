@@ -14,6 +14,7 @@ import pytest
 from common import (
     Logger,
     Logger as log,
+    MAIL_TYPES,
     all_sigs_compare,
     cal_compare_timestamp,
     cal_sig_processed_rate,
@@ -23,6 +24,7 @@ from common import (
     create_email_mappings,
     csv_to_xlsx,
     excel_optimization,
+    expand_controls,
     fill_status,
     get_committers_mapping,
     get_email_mappings,
@@ -30,9 +32,15 @@ from common import (
     get_repo_members,
     get_sigs,
     get_user_id,
+    linkify_cells,
+    load_email_controls,
+    merge_html_parts,
     prepare_env,
     send_email,
+    should_send,
     single_sig_compare,
+    sort_rows_by_sig_duration,
+    write_dry_run_html,
 )
 
 
@@ -377,6 +385,41 @@ class TestCleanEnv:
         assert 'data' in calls
 
 
+class TestSortRowsBySigDuration:
+    def test_sig_ascending_and_duration_descending(self):
+        rows = [
+            ['sig-b', 'repo', '#3', 'title', 'status', '5'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '1'],
+            ['sig-b', 'repo', '#1', 'title', 'status', '30'],
+            ['sig-a', 'repo', '#4', 'title', 'status', '9'],
+        ]
+        assert sort_rows_by_sig_duration(rows, 5) == [
+            ['sig-a', 'repo', '#4', 'title', 'status', '9'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '1'],
+            ['sig-b', 'repo', '#1', 'title', 'status', '30'],
+            ['sig-b', 'repo', '#3', 'title', 'status', '5'],
+        ]
+
+    def test_same_duration_keeps_input_order(self):
+        rows = [
+            ['sig-a', 'repo', '#1', 'title', 'status', '7'],
+            ['sig-a', 'repo', '#2', 'title', 'status', '7'],
+        ]
+        assert [r[2] for r in sort_rows_by_sig_duration(rows, 5)] == ['#1', '#2']
+
+    def test_empty_duration_is_treated_as_zero(self):
+        rows = [
+            ['sig-a', 'repo', '#1', 'title', 'status', ''],
+            ['sig-a', 'repo', '#2', 'title', 'status', '3'],
+        ]
+        assert [r[2] for r in sort_rows_by_sig_duration(rows, 5)] == ['#2', '#1']
+
+    def test_does_not_mutate_input(self):
+        rows = [['sig-a', 'repo', '#1', 'title', 'status', '1']]
+        sort_rows_by_sig_duration(rows, 5)
+        assert rows == [['sig-a', 'repo', '#1', 'title', 'status', '1']]
+
+
 # ---------------------------------------------------------------------------
 # csv_to_xlsx
 # ---------------------------------------------------------------------------
@@ -414,6 +457,67 @@ class TestCsvToXlsx:
 
 
 # ---------------------------------------------------------------------------
+# linkify_cells
+# ---------------------------------------------------------------------------
+
+class TestLinkifyCells:
+    def _worksheet(self, values):
+        """Build a one-row worksheet holding the given cell values."""
+        import openpyxl
+        ws = openpyxl.Workbook().active
+        for idx, value in enumerate(values):
+            ws.cell(row=1, column=idx + 1, value=value)
+        return ws
+
+    def test_anchor_becomes_hyperlink(self):
+        """An anchor cell keeps its text and carries the URL as a real hyperlink."""
+        ws = self._worksheet(["<a href='https://gitcode.com/openeuler/x/pulls/1'>#1</a>"])
+        linkify_cells(ws)
+        assert ws['A1'].value == '#1'
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/1'
+
+    def test_double_quoted_anchor_also_matched(self):
+        """Both quote styles in the anchor mark-up are accepted."""
+        ws = self._worksheet(['<a href="https://gitcode.com/openeuler/x/pulls/2">#2</a>'])
+        linkify_cells(ws)
+        assert ws['A1'].value == '#2'
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/2'
+
+    def test_plain_cells_untouched(self):
+        """Cells without anchor mark-up keep their value and get no hyperlink."""
+        ws = self._worksheet(['sig-ai', 'openeuler/x', '待合入', 12, None])
+        linkify_cells(ws)
+        assert [c.value for c in ws[1]] == ['sig-ai', 'openeuler/x', '待合入', 12, None]
+        assert all(c.hyperlink is None for c in ws[1])
+
+    def test_title_with_apostrophe_keeps_full_text(self):
+        """An apostrophe inside the title does not truncate the display text."""
+        ws = self._worksheet(["<a href='https://gitcode.com/openeuler/x/pulls/3'>it's a fix</a>"])
+        linkify_cells(ws)
+        assert ws['A1'].value == "it's a fix"
+        assert ws['A1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/3'
+
+    def test_partial_anchor_left_alone(self):
+        """Text that only looks like a link (extra content around it) is not converted."""
+        value = "see <a href='https://gitcode.com/openeuler/x/pulls/4'>#4</a> please"
+        ws = self._worksheet([value])
+        linkify_cells(ws)
+        assert ws['A1'].value == value
+        assert ws['A1'].hyperlink is None
+
+    def test_hyperlinks_survive_column_and_row_surgery(self):
+        """The cells that end up holding the links get them, not the coordinates they had before."""
+        import openpyxl
+        ws = openpyxl.Workbook().active
+        ws.append(['sig-ai', 'openeuler/x', 'main',
+                   "<a href='https://gitcode.com/openeuler/x/pulls/5'>#5</a>", '待合入', 3])
+        ws.delete_cols(1)
+        linkify_cells(ws)
+        assert ws['C1'].value == '#5'
+        assert ws['C1'].hyperlink.target == 'https://gitcode.com/openeuler/x/pulls/5'
+
+
+# ---------------------------------------------------------------------------
 # excel_optimization
 # ---------------------------------------------------------------------------
 
@@ -438,6 +542,24 @@ class TestExcelOptimization:
         content = open(html, 'r', encoding='utf-8').read()
         assert len(content) > 0
 
+    def test_links_exported_as_clickable_anchors(self, tmp_path, compare_dict_sample):
+        """Link cells end up as real <a href> tags, not as escaped mark-up.
+
+        Guards the report's links against xlsx2html escaping cell text (it does from
+        0.6.4 on), which used to show recipients raw "<a href='...'>" strings.
+        """
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration\n'
+            'sig-ai,openeuler/ai-framework,main,'
+            "<a href='https://gitcode.com/openeuler/ai-framework/pulls/100'>#100</a>,"
+            "<a href='https://gitcode.com/openeuler/ai-framework/pulls/100'>Fix bug</a>,待合入,3\n"
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'link_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False)
+        content = open(xlsx.replace('.xlsx', '.html'), 'r', encoding='utf-8').read()
+        assert '<a href="https://gitcode.com/openeuler/ai-framework/pulls/100">#100</a>' in content
+        assert '&lt;a' not in content
+
     def test_issue_mode_generates_html(self, tmp_path, compare_dict_sample):
         """excel_optimization generates an HTML file for Issue layout."""
         csv = (
@@ -448,6 +570,41 @@ class TestExcelOptimization:
         excel_optimization(xlsx, compare_dict_sample, is_issue=True)
         html = xlsx.replace('.xlsx', '.html')
         assert os.path.exists(html)
+
+    def test_extra_column_appended_with_fills(self, tmp_path, compare_dict_sample):
+        """An extra trailing column is added with its header and value-based fills."""
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration,doc_status\n'
+            'sig-ai,openeuler/ai-framework,main,<a href="url">#100</a>,<a href="url">Fix</a>,待合入,3,待资料评审\n'
+            'sig-ai,openeuler/ai-models,main,<a href="url">#101</a>,<a href="url">Doc</a>,待合入,3,资料已评审\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'extra_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False, extra_header='资料状态',
+                           extra_fills={'待资料评审': 'FFFF00', '资料已评审': 'C6EFCE'})
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        values = [row[-1] for row in ws.iter_rows(values_only=True)]
+        assert '资料状态' in values                       # header row
+        assert '待资料评审' in values and '资料已评审' in values
+        fills = {c.value: c.fill.start_color.rgb for row in ws.iter_rows() for c in row
+                 if c.value in ('待资料评审', '资料已评审')}
+        assert fills == {'待资料评审': '00FFFF00', '资料已评审': '00C6EFCE'}
+
+    def test_duration_column_lookup_not_broken_by_extra_column(self, tmp_path, compare_dict_sample):
+        """The duration colouring still targets the duration column, not the extra one."""
+        csv = (
+            'sig_name,repo,branch,number,title,status,duration,doc_status\n'
+            'sig-ai,openeuler/ai-framework,main,<a href="url">#100</a>,<a href="url">Fix</a>,待合入,40,待资料评审\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'duration_test')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False, extra_header='资料状态')
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        duration_cells = [c for row in ws.iter_rows() for c in row if c.value == 40]
+        assert len(duration_cells) == 1
+        assert duration_cells[0].fill.start_color.rgb == '00FF7F50'   # 开启天数 40 → 第二档
 
     def test_non_xlsx_returns_none(self, tmp_path, compare_dict_sample):
         """Passing a non-.xlsx path returns early."""
@@ -805,11 +962,14 @@ class TestSendEmail:
         # Should not raise
         send_email(str(xlsx), 'testuser', ['test@example.com'])
 
-    def test_link_escaping_fix(self, tmp_path, set_smtp_env, monkeypatch):
-        """xlsx2html &lt;a&gt; escaping is restored to real <a> links."""
+    def test_link_mark_up_is_not_rewritten(self, tmp_path, set_smtp_env, monkeypatch):
+        """send_email passes the report HTML through verbatim.
+
+        It used to un-escape link mark-up on the way out; links are real Excel
+        hyperlinks now (see linkify_cells), so it must not touch the body any more.
+        """
         html = tmp_path / 'test.html'
         xlsx = tmp_path / 'test.xlsx'
-        # Simulate xlsx2html output with escaped links
         html.write_text(
             '<html><body>&lt;a href="http://x"&gt;text&lt;/a&gt;</body></html>',
             encoding='utf-8'
@@ -822,12 +982,223 @@ class TestSendEmail:
         mock_smtp.__exit__ = MagicMock(return_value=False)
         monkeypatch.setattr('common.smtplib.SMTP_SSL', lambda host, port, timeout: mock_smtp)
         monkeypatch.setattr('common.MIMEMultipart', MagicMock())
+        bodies = []
+        monkeypatch.setattr('common.MIMEText',
+                            lambda body, subtype, charset: bodies.append(body) or MagicMock())
 
         send_email(str(xlsx), 'testuser', ['test@example.com'])
-        # Verify the body contains fixed <a> tags
-        # The MIMEText would have the fixed content
-        from common import MIMEText
-        # MIMEText was called with the fixed body
+        assert '&lt;a href="http://x"&gt;text&lt;/a&gt;' in bodies[0]
+
+
+# ---------------------------------------------------------------------------
+# expand_controls / load_email_controls / should_send
+# ---------------------------------------------------------------------------
+
+class TestExpandControls:
+    def test_none_config(self):
+        result = expand_controls(None)
+        assert result['pr']['maintainer'] is True
+        assert result['issue']['committer'] is True
+
+    def test_false_config(self):
+        result = expand_controls(False)
+        assert result['pr']['maintainer'] is True
+        assert result['issue']['committer'] is True
+
+    def test_all_false(self):
+        result = expand_controls({'all': False})
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is False
+        assert result['issue']['maintainer'] is False
+        assert result['issue']['committer'] is False
+
+    def test_pr_false(self):
+        result = expand_controls({'pr': False})
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is False
+        assert result['issue']['maintainer'] is True
+
+    def test_partial_role_control(self):
+        result = expand_controls({
+            'pr': {'maintainer': False},
+            'issue': {'committer': False},
+        })
+        assert result['pr']['maintainer'] is False
+        assert result['pr']['committer'] is True
+        assert result['issue']['maintainer'] is True
+        assert result['issue']['committer'] is False
+
+    def test_docs_types_default_to_true(self):
+        result = expand_controls(None)
+        assert result['docs_pr'] == {'receiver': True}
+        assert result['docs_issue'] == {'receiver': True}
+
+    def test_docs_type_false_only_affects_itself(self):
+        result = expand_controls({'docs_pr': False})
+        assert result['docs_pr']['receiver'] is False
+        assert result['docs_issue']['receiver'] is True
+        assert result['pr']['maintainer'] is True
+
+    def test_docs_role_control(self):
+        result = expand_controls({'docs_issue': {'receiver': False}})
+        assert result['docs_issue']['receiver'] is False
+        assert result['docs_pr']['receiver'] is True
+
+    def test_all_false_covers_docs_types(self):
+        result = expand_controls({'all': False})
+        assert result['docs_pr']['receiver'] is False
+        assert result['docs_issue']['receiver'] is False
+
+    def test_unknown_type_is_ignored(self):
+        result = expand_controls({'unknown_type': False})
+        assert set(result) == set(MAIL_TYPES)
+
+
+class TestLoadEmailControls:
+    def test_missing_file_returns_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', str(tmp_path / 'nonexistent.yaml'))
+        controls = load_email_controls()
+        assert controls['anyone']['pr']['maintainer'] is True
+
+    def test_default_path_independent_of_cwd(self, tmp_path, monkeypatch):
+        """Default control file resolves to the repo root even after chdir."""
+        monkeypatch.delenv('EMAIL_CONTROLS_PATH', raising=False)
+        monkeypatch.chdir(tmp_path)
+        controls = load_email_controls()
+        # binaryzero-hyh is unsubscribed in the repo-root email_controls.yaml
+        assert controls['binaryzero-hyh']['pr']['maintainer'] is False
+        assert controls['binaryzero-hyh']['issue']['committer'] is False
+
+    def test_relative_env_path_resolves_repo_root(self, tmp_path, monkeypatch):
+        """A relative EMAIL_CONTROLS_PATH resolves against the repo root, not CWD."""
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', 'email_controls.yaml')
+        monkeypatch.chdir(tmp_path)
+        controls = load_email_controls()
+        assert controls['binaryzero-hyh']['pr']['maintainer'] is False
+
+    def test_loads_from_env_path(self, tmp_path, monkeypatch):
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text('alice:\n  pr:\n    maintainer: false\n', encoding='utf-8')
+        monkeypatch.setenv('EMAIL_CONTROLS_PATH', str(controls_file))
+        controls = load_email_controls()
+        assert controls['alice']['pr']['maintainer'] is False
+        assert controls['alice']['pr']['committer'] is True
+
+    def test_loads_from_arg_path(self, tmp_path):
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text('bob:\n  issue: false\n', encoding='utf-8')
+        controls = load_email_controls(str(controls_file))
+        assert controls['bob']['issue']['maintainer'] is False
+        assert controls['bob']['issue']['committer'] is False
+        assert controls['bob']['pr']['maintainer'] is True
+
+    def test_community_override_replaces_base(self, tmp_path):
+        """communities.<name> completely overrides the base config for that community."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'carol:\n'
+            '  issue: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      all: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='boostkit')
+        assert controls['carol']['pr']['maintainer'] is False
+        assert controls['carol']['issue']['maintainer'] is False
+
+    def test_community_override_ignored_for_other_community(self, tmp_path):
+        """Overrides for other communities do not apply."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'carol:\n'
+            '  issue: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      all: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='openeuler')
+        assert controls['carol']['pr']['maintainer'] is True
+        assert controls['carol']['issue']['maintainer'] is False
+
+    def test_community_override_can_resubscribe(self, tmp_path):
+        """A community override can re-enable mail the base config disabled."""
+        controls_file = tmp_path / 'controls.yaml'
+        controls_file.write_text(
+            'dave:\n'
+            '  all: false\n'
+            '  communities:\n'
+            '    boostkit:\n'
+            '      issue: false\n',
+            encoding='utf-8')
+        controls = load_email_controls(str(controls_file), community='boostkit')
+        assert controls['dave']['pr']['maintainer'] is True
+        assert controls['dave']['issue']['maintainer'] is False
+
+
+class TestShouldSend:
+    def test_default_true(self):
+        from collections import defaultdict
+        controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
+        assert should_send(controls, 'alice', 'pr', 'maintainer') is True
+
+    def test_false_value(self):
+        controls = {'alice': {'pr': {'maintainer': False, 'committer': True}}}
+        assert should_send(controls, 'alice', 'pr', 'maintainer') is False
+        assert should_send(controls, 'alice', 'pr', 'committer') is True
+
+    def test_docs_types(self):
+        from collections import defaultdict
+        controls = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: True)))
+        controls['alice'] = expand_controls({'docs_pr': False})
+        assert should_send(controls, 'alice', 'docs_pr', 'receiver') is False
+        assert should_send(controls, 'alice', 'docs_issue', 'receiver') is True
+
+
+# ---------------------------------------------------------------------------
+# merge_html_parts / write_dry_run_html
+# ---------------------------------------------------------------------------
+
+class TestMergeHtmlParts:
+    def test_single_part(self, tmp_path):
+        html = tmp_path / 'part1.html'
+        html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html))], 'pr')
+        assert 'Part 1' in result
+        assert 'Title 1' in result
+        assert '退订' in result
+        # the weekly mails keep their wording: no docs option is listed there
+        assert '退订资料汇总' not in result
+
+    def test_docs_mail_lists_docs_unsubscribe_option(self, tmp_path):
+        html = tmp_path / 'part1.html'
+        html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html))], 'docs_pr')
+        assert '退订资料汇总' in result
+        assert '退订 PR 汇总' in result
+
+    def test_two_parts(self, tmp_path):
+        html1 = tmp_path / 'part1.html'
+        html2 = tmp_path / 'part2.html'
+        html1.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        html2.write_text('<html><body><p>Part 2</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html1)), ('Title 2', str(html2))], 'pr')
+        assert 'Part 1' in result
+        assert 'Part 2' in result
+        assert '<h3' in result
+        assert 'Title 1' in result
+        assert 'Title 2' in result
+
+    def test_empty_parts(self):
+        assert merge_html_parts([], 'pr') is None
+
+
+class TestWriteDryRunHtml:
+    def test_writes_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        write_dry_run_html('pr', 'alice', '<html><body>Test</body></html>')
+        output = tmp_path / 'test_output' / 'pr_alice.html'
+        assert output.exists()
+        assert 'Test' in output.read_text(encoding='utf-8')
 
 
 # ---------------------------------------------------------------------------
@@ -863,7 +1234,8 @@ class TestGetSigs:
 
         with patch('common.os.listdir', fake_listdir):
             with patch('common.os.walk', fake_walk):
-                sigs, sigs_list = get_sigs()
+                with patch('common.os.path.isdir', return_value=True):
+                    sigs, sigs_list = get_sigs()
 
         assert len(sigs) >= 2
         for s in sigs:
