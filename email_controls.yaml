@@ -96,3 +96,17 @@ aevdark:
   communities:
     openeuler:
       all: false
+
+# taobirong@huawei.com (sig-HPC committer)：退订 openEuler 社区所有汇总邮件
+taobirong:
+  communities:
+    openeuler:
+      all: false
+
+# gaosheng27@huawei.com (sig-YuanRong committer)：退订 openEuler 社区所有汇总邮件
+# 注意：该用户在 sig-YuanRong/sig-info.yaml 里只有 atomgit_id: lebreton（gaosheng27 只是邮箱前缀），
+# 报表按 get_user_id() 取 gitcode_id/gitee_id/atomgit_id，因此键必须写 lebreton，写邮箱前缀不会生效
+lebreton:
+  communities:
+    openeuler:
+      all: false
