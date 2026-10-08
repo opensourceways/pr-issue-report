@@ -110,3 +110,9 @@ lebreton:
   communities:
     openeuler:
       all: false
+
+# huhuikai@kylinsec.com.cn (Storage SIG committer)：退订 openEuler 社区所有汇总邮件
+huhuikai:
+  communities:
+    openeuler:
+      all: false
