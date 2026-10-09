@@ -2,4 +2,7 @@ requests
 openpyxl
 pandas
 PyYAML
-xlsx2html
+# Floor only: 0.6.2 does "from babel.numbers import number_re", which babel 2.18.0
+# removed, so it breaks on a fresh install. Link cells are real Excel hyperlinks now
+# (see common.linkify_cells), so the escaping change in 0.6.4 no longer matters.
+xlsx2html>=0.6.4
