@@ -491,14 +491,17 @@ def merge_html_parts(parts, mail_type):
         '• 只退订作为 Committer 的部分<br>',
         '• 完全退订所有邮件<br><br>',
     ]
+    # mailto anchor + trailing space on purpose: a bare address glued to the CJK text
+    # that follows gets auto-linked as one link by some mail clients (the full-width
+    # comma is not seen as a boundary), which swallows "并注明退订类型：" into the link
+    mail_link = '<a href="mailto:{0}">{0}</a>'.format(reply_to)
     unsubscribe_note = (
         '<p style="font-size:12px;color:#666;">'
-        '如需退订，请直接回复本邮件，或发送邮件至 '
-        '<b>{}</b>，并注明退订类型：<br>'
+        '如需退订，请发送邮件至 {} 并注明退订类型：<br>'
         '{}'
         '管理员将在 1-2 个工作日内处理。'
         '</p>'
-    ).format(reply_to, ''.join(unsubscribe_options))
+    ).format(mail_link, ''.join(unsubscribe_options))
     merged_body += unsubscribe_note
     return '<html><body>{}</body></html>'.format(merged_body)
 

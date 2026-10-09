@@ -85,7 +85,7 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 - **GitCode API 报错/限流**：确认 `GITCODE_TOKEN` 有效；实测全量 320 次调用约 2 分钟，无 429。资料汇总 job 会各自再跑一轮全量抓取，所以两个 BoostKit job 建议错开调度，避免同时打 API。
 - **资料汇总收不到邮件**：按序排查——① `communities.yaml` 的 `docs_report.receivers` 是否配了名单（默认是空列表，此时日志里会有 `No doc report receiver could be resolved`）；② 收件人写的是 gitcode_id 时，该 id 是否在 `docs_report.workdir` 下的 `email_mapping.yaml` 里且邮箱非空（不是 SIG 成员就查不到，此时直接在配置里写邮箱）；③ `email_controls.yaml` 是否退订了 `docs_pr` / `docs_issue`；④ 本期确实没有资料相关条目时不会发空邮件，日志里会有 `No doc pr found, skip docs_pr email`。
 - **资料汇总里出现了没改文档的 PR**：先看它的标签是否在 `docs_report.pr_labels` 里，再回查该 PR 的改动文件是否匹配 `docs` / `README.md` / `README_en.md`（标签由 robot 按改动路径自动打，路径表和仓库覆盖范围在 robot 配置里维护，不在本仓库）。**不要把 `docs-ci-pipeline-*` 加进 `pr_labels`**：它是仓库级 CI 状态标签，配了资料流水线的仓库里所有 PR 都会带。
-- **退订请求处理**：流程由代码决定——每封邮件底部带退订说明，`Reply-To` 指向 `email_reply_to`（默认 `huanglei227@h-partners.com`），用户直接回复邮件并注明退订类型。管理员收到回复后，编辑**仓库根目录**的 `email_controls.yaml`（语法见 README，可精确到 PR/Issue × Maintainer/Committer）。注意必须**提交到 `lei_dev` 分支**才生效：job 每次构建都会 `git reset --hard` 到该分支，工作区里的本地修改会被覆盖。改动随下一次定时构建生效。控制文件路径基于代码所在位置解析（`common.py` 同级），与运行时的社区子目录无关，也可用 `EMAIL_CONTROLS_PATH` 覆盖。
+- **退订请求处理**：流程由代码决定——每封邮件底部带退订说明，注明退订类型后发送至 `email_reply_to`（默认 `huanglei227@h-partners.com`，邮件中渲染为 `mailto:` 链接）；直接回复本邮件收不到，说明里已不再提供该方式。管理员收到退订邮件后，编辑**仓库根目录**的 `email_controls.yaml`（语法见 README，可精确到 PR/Issue × Maintainer/Committer）。注意必须**提交到 `lei_dev` 分支**才生效：job 每次构建都会 `git reset --hard` 到该分支，工作区里的本地修改会被覆盖。改动随下一次定时构建生效。控制文件路径基于代码所在位置解析（`common.py` 同级），与运行时的社区子目录无关，也可用 `EMAIL_CONTROLS_PATH` 覆盖。
 
 ## Docker 部署（备选）
 

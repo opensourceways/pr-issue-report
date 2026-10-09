@@ -1169,6 +1169,16 @@ class TestMergeHtmlParts:
         # the weekly mails keep their wording: no docs option is listed there
         assert '退订资料汇总' not in result
 
+    def test_unsubscribe_note_links_the_address_only(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('email_reply_to', 'admin@example.com')
+        html = tmp_path / 'part1.html'
+        html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
+        result = merge_html_parts([('Title 1', str(html))], 'pr')
+        # replying to the mail does not reach the admin, so only mailing is offered
+        assert '直接回复' not in result
+        # the address alone is a mailto link; the text that follows stays outside it
+        assert '<a href="mailto:admin@example.com">admin@example.com</a> 并注明退订类型：' in result
+
     def test_docs_mail_lists_docs_unsubscribe_option(self, tmp_path):
         html = tmp_path / 'part1.html'
         html.write_text('<html><body><p>Part 1</p></body></html>', encoding='utf-8')
