@@ -116,3 +116,9 @@ huhuikai:
   communities:
     openeuler:
       all: false
+
+# lilinjie11@huawei.com (sig-ai committer)：退订 openEuler 社区所有汇总邮件
+lilinjie11:
+  communities:
+    openeuler:
+      all: false
