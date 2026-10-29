@@ -71,3 +71,24 @@ boostkit:
     body_pr: 以下是 BoostKit 社区所有涉及资料变更的待处理 PR，烦请及时跟进。
     subject_issue: BoostKit 资料相关 Issue 汇总
     body_issue: 以下是 BoostKit 社区所有资料相关的待处理 Issue，烦请及时跟进。
+  # 社区全量汇总：社区级邮件（不按 reviewer 分发），发给 QA SIG 的固定收件人名单，
+  # 由独立流水线 qa_statistics.py 处理（见 jenkins_job_boostkit_qa.sh）。
+  # 与资料汇总不同，这里不做任何过滤：所有 SIG 的待处理 PR / Issue 全量汇总。
+  qa_report:
+    enabled: true
+    workdir: boostkit-qa        # 独立运行目录，可与周报、资料汇总并行跑互不干扰
+    # 成员变动自动适配：每次运行从 community/sig/QA/sig-info.yaml 读取当前 maintainer，
+    # 换人/换邮箱无需改本文件（成员以 boostkit/community 的 sig/QA/sig-info.yaml 为准）。
+    # receiver_roles 可加 'committer'（会取各仓库 committers），默认只看 maintainer。
+    receivers_sig: QA
+    receiver_roles:
+      - maintainer
+    # 额外固定收件人（可选，留空即可）：含 @ 直接当邮箱，否则按 gitcode_id 从 sig-info 邮箱映射查。
+    # 注意：当前两位 maintainer 都是 163 个人邮箱，未认证 SMTP 发出的邮件容易被判为垃圾邮件，
+    # 需提醒加白名单，或改用企业邮箱/邮件列表。
+    receivers: []
+    nickname: BoostKit QA SIG 负责人
+    subject_pr: BoostKit 社区待处理 PR 汇总（全量）
+    body_pr: 以下是 BoostKit 社区所有 SIG 的待处理 PR 汇总，按 SIG 分组，烦请及时跟进。
+    subject_issue: BoostKit 社区待处理 Issue 汇总（全量）
+    body_issue: 以下是 BoostKit 社区所有 SIG 的待处理 Issue 汇总，按 SIG 分组，烦请及时跟进。

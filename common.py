@@ -355,6 +355,46 @@ def get_email_mappings():
     return email_mappings
 
 
+def get_sig_members(sig_name, roles=None):
+    """
+    Read current members of one sig from the cloned community repo.
+    Membership is read from sig-info.yaml at run time, so maintainer/committer changes are
+    picked up on the next run without touching this repository's config.
+    :param sig_name: sig directory name, e.g. 'QA'
+    :param roles: roles to include, default ['maintainer']; 'committer' is also supported
+    :return: list of (gitcode_id, email); members without an email are skipped
+    """
+    roles = roles or ['maintainer']
+    sig_info_file = os.path.join('community', 'sig', sig_name, 'sig-info.yaml')
+    if not os.path.exists(sig_info_file):
+        log.logger.warning('WARNING! sig-info.yaml of sig {} not found, cannot resolve its members'.format(sig_name))
+        return []
+    with open(sig_info_file, 'r', encoding='utf-8') as f:
+        sig_info = yaml.safe_load(f) or {}
+    members = []
+    if 'maintainer' in roles:
+        members.extend(sig_info.get('maintainers') or [])
+    if 'committer' in roles:
+        for entry in sig_info.get('repositories') or []:
+            members.extend(entry.get('committers') or [])
+    resolved = []
+    seen = set()
+    for member in members:
+        gitcode_id = get_user_id(member)
+        email = str(member.get('email') or '').strip()
+        if email in ('null', 'NA'):
+            email = ''
+        if not email:
+            log.logger.warning('WARNING! Sig {} member {} has no email, skip it'.format(sig_name, gitcode_id))
+            continue
+        key = gitcode_id or email
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append((key, email))
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Email controls (unsubscribe / preference management)
 # ---------------------------------------------------------------------------
@@ -365,11 +405,18 @@ MAIL_TYPES = {
     'issue': ('maintainer', 'committer'),
     'docs_pr': ('receiver',),
     'docs_issue': ('receiver',),
+    'qa_pr': ('receiver',),
+    'qa_issue': ('receiver',),
 }
 
-# community wide report types (see docs_statistics.py); the unsubscribe note lists their
-# own option only in these mails, so the weekly mails keep their wording unchanged
-DOCS_MAIL_TYPES = ('docs_pr', 'docs_issue')
+# community wide report types (see docs_statistics.py and qa_statistics.py); each mail lists
+# only its own option, so the weekly mails keep their wording unchanged
+COMMUNITY_MAIL_TYPES = {
+    'docs_pr': '退订资料汇总（资料相关 PR / Issue）',
+    'docs_issue': '退订资料汇总（资料相关 PR / Issue）',
+    'qa_pr': '退订社区全量汇总（全量 PR / Issue）',
+    'qa_issue': '退订社区全量汇总（全量 PR / Issue）',
+}
 
 
 def expand_controls(config):
@@ -447,7 +494,8 @@ def should_send(controls, gitee_id, mail_type, role):
     Check whether a user should receive a specific part of emails.
     :param controls: controls dict from load_email_controls()
     :param gitee_id: user gitee_id
-    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue')
+    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue',
+                      'qa_pr', 'qa_issue')
     :param role: one of the roles registered for that mail type
     :return: bool
     """
@@ -484,8 +532,9 @@ def merge_html_parts(parts, mail_type):
         '• 退订 PR 汇总<br>',
         '• 退订 Issue 汇总<br>',
     ]
-    if mail_type in DOCS_MAIL_TYPES:
-        unsubscribe_options.append('• 退订资料汇总（资料相关 PR / Issue）<br>')
+    option = COMMUNITY_MAIL_TYPES.get(mail_type)
+    if option:
+        unsubscribe_options.append('• {}<br>'.format(option))
     unsubscribe_options += [
         '• 只退订作为 Maintainer 的部分<br>',
         '• 只退订作为 Committer 的部分<br>',
@@ -509,7 +558,8 @@ def merge_html_parts(parts, mail_type):
 def write_dry_run_html(mail_type, gitee_id, html_content):
     """
     Write generated HTML to local test_output directory when DRY_RUN is enabled.
-    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue')
+    :param mail_type: any key of MAIL_TYPES ('pr', 'issue', 'docs_pr', 'docs_issue',
+                      'qa_pr', 'qa_issue')
     :param gitee_id: user gitee_id
     :param html_content: HTML string to write
     """

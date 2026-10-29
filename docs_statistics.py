@@ -86,9 +86,10 @@ def doc_status_fills(docs_config):
             if status.get('color')}
 
 
-def build_pr_row(sig_name, full_repo, item, config):
+def build_pr_row(sig_name, full_repo, item, config, with_doc_status=True):
     """
-    Build one report row for a doc related pull request.
+    Build one report row for a pull request.
+    :param with_doc_status: append the doc label state column (docs report only)
     :return: [sig, repo, target branch, number link, title link, status, open days, doc status]
     """
     title = item['title']
@@ -111,9 +112,12 @@ def build_pr_row(sig_name, full_repo, item, config):
         status = fill_status(status, '存在冲突')
     if wait_update_label and wait_update_label in labels:
         status = fill_status(status, '等待更新')
-    doc_text, _ = doc_status(item, config.get('docs_report') or {})
-    return [sig_name, full_repo, ref_branch, number_link, link, status,
-            count_duration(item['created_at']), doc_text]
+    row = [sig_name, full_repo, ref_branch, number_link, link, status,
+           count_duration(item['created_at'])]
+    if with_doc_status:
+        doc_text, _ = doc_status(item, config.get('docs_report') or {})
+        row.append(doc_text)
+    return row
 
 
 def build_issue_row(sig_name, full_repo, item):
@@ -136,15 +140,16 @@ def build_issue_row(sig_name, full_repo, item):
 # Collecting doc related rows
 # ---------------------------------------------------------------------------
 
-def collect_doc_pr_rows(sigs, repos_pulls_mapping, config):
+def collect_pr_rows(sigs, repos_pulls_mapping, config, predicate=None, with_doc_status=False):
     """
-    Collect doc related open pull requests of every sig.
+    Collect open pull requests of every sig.
     :param sigs: sigs list from get_sigs()
     :param repos_pulls_mapping: {repo/.../number: pull item}
     :param config: community config dict
+    :param predicate: optional filter, called with the pull item; None keeps every pull
+    :param with_doc_status: append the doc label state column (docs report only)
     :return: list of report rows
     """
-    pr_labels = (config.get('docs_report') or {}).get('pr_labels') or []
     orgs_lower = [org.lower() for org in config['orgs']]
     rows = []
     for sig in sigs:
@@ -158,24 +163,23 @@ def collect_doc_pr_rows(sigs, repos_pulls_mapping, config):
                 if not mapping_key.startswith(full_repo + '/'):
                     continue
                 item = repos_pulls_mapping[mapping_key]
-                if not is_doc_pr(item, pr_labels):
+                if predicate is not None and not predicate(item):
                     continue
-                log.logger.info('Find doc pr: {}'.format(mapping_key))
-                rows.append(build_pr_row(sig_name, full_repo, item, config))
+                log.logger.info('Find pr: {}'.format(mapping_key))
+                rows.append(build_pr_row(sig_name, full_repo, item, config,
+                                         with_doc_status=with_doc_status))
     return rows
 
 
-def collect_doc_issue_rows(sigs, repos_issues_mapping, config):
+def collect_issue_rows(sigs, repos_issues_mapping, config, predicate=None):
     """
-    Collect doc related open issues of every sig.
+    Collect open issues of every sig.
     :param sigs: sigs list from get_sigs()
     :param repos_issues_mapping: {repo/.../number: issue item}
     :param config: community config dict
+    :param predicate: optional filter, called with the issue item; None keeps every issue
     :return: list of report rows
     """
-    docs_config = config.get('docs_report') or {}
-    title_prefix = docs_config.get('issue_title_prefix')
-    issue_type = docs_config.get('issue_type')
     orgs_lower = [org.lower() for org in config['orgs']]
     rows = []
     for sig in sigs:
@@ -189,27 +193,58 @@ def collect_doc_issue_rows(sigs, repos_issues_mapping, config):
                 if not mapping_key.startswith(full_repo + '/'):
                     continue
                 item = repos_issues_mapping[mapping_key]
-                if not is_doc_issue(item, title_prefix, issue_type):
+                if predicate is not None and not predicate(item):
                     continue
-                log.logger.info('Find doc issue: {}'.format(mapping_key))
+                log.logger.info('Find issue: {}'.format(mapping_key))
                 rows.append(build_issue_row(sig_name, full_repo, item))
     return rows
+
+
+def collect_doc_pr_rows(sigs, repos_pulls_mapping, config):
+    """
+    Collect doc related open pull requests of every sig.
+    :return: list of report rows
+    """
+    pr_labels = (config.get('docs_report') or {}).get('pr_labels') or []
+    return collect_pr_rows(sigs, repos_pulls_mapping, config,
+                           predicate=lambda item: is_doc_pr(item, pr_labels),
+                           with_doc_status=True)
+
+
+def collect_doc_issue_rows(sigs, repos_issues_mapping, config):
+    """
+    Collect doc related open issues of every sig.
+    :return: list of report rows
+    """
+    docs_config = config.get('docs_report') or {}
+    title_prefix = docs_config.get('issue_title_prefix')
+    issue_type = docs_config.get('issue_type')
+    return collect_issue_rows(sigs, repos_issues_mapping, config,
+                              predicate=lambda item: is_doc_issue(item, title_prefix, issue_type))
 
 
 # ---------------------------------------------------------------------------
 # Receivers
 # ---------------------------------------------------------------------------
 
-def resolve_recipients(config):
+def resolve_recipients(config, report_key='docs_report'):
     """
-    Resolve the configured doc report receivers into (key, email) pairs.
-    A receiver containing '@' is used as an email address directly; otherwise it is treated
-    as a gitcode_id and looked up in the sig-info email mapping.
+    Resolve the configured community report receivers into (key, email) pairs.
+    Members can be resolved dynamically from the cloned community repo (receivers_sig /
+    receiver_roles), so sig membership changes need no config edit; explicit receivers
+    (an entry containing '@' is an email, otherwise a gitcode_id looked up in the sig-info
+    email mapping) are added on top.
     :param config: community config dict
+    :param report_key: config block holding the receivers ('docs_report' or 'qa_report')
     :return: list of (key, email); key is what email_controls.yaml is matched against
     """
-    receivers = (config.get('docs_report') or {}).get('receivers') or []
+    report_config = config.get(report_key) or {}
     resolved = []
+    sig_name = report_config.get('receivers_sig')
+    if sig_name:
+        roles = report_config.get('receiver_roles') or ['maintainer']
+        resolved.extend(get_sig_members(sig_name, roles))
+    receivers = report_config.get('receivers') or []
     email_mappings = None
     for receiver in receivers:
         receiver = str(receiver).strip()
@@ -222,12 +257,80 @@ def resolve_recipients(config):
             email_mappings = get_email_mappings()
         email = email_mappings.get(receiver)
         if not email:
-            log.logger.warning('WARNING! Cannot find email address of doc report receiver {}'.format(receiver))
+            log.logger.warning('WARNING! Cannot find email address of {} receiver {}'.format(report_key, receiver))
             continue
         resolved.append((receiver, email))
-    if not resolved:
-        log.logger.warning('WARNING! No doc report receiver could be resolved, no email will be sent')
-    return resolved
+    # a member may also be listed as an explicit receiver; keep only the first occurrence
+    unique = []
+    seen_emails = set()
+    for key, email in resolved:
+        email_lower = email.lower()
+        if email_lower in seen_emails:
+            continue
+        seen_emails.add(email_lower)
+        unique.append((key, email))
+    if not unique:
+        log.logger.warning('WARNING! No {} receiver could be resolved, no email will be sent'.format(report_key))
+    return unique
+
+
+# ---------------------------------------------------------------------------
+# Doc statistics
+# ---------------------------------------------------------------------------
+
+def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject, body_text,
+                          title, report_config, config, recipients, controls, compare_dict,
+                          extra_header=None, extra_fills=None):
+    """
+    Render one community wide report and send it to the resolved receivers.
+    Used by both the docs report (docs_statistics.py) and the QA report (qa_statistics.py).
+    :param data_dir: directory to store temporary data
+    :param csv_name: file name (without extension) of the intermediate csv
+    :param mail_type: mail type used by email controls ('docs_pr' / 'qa_pr' / ...)
+    :param rows: report rows
+    :param is_issue: True for issue rows (no branch column)
+    :param subject: mail subject
+    :param body_text: mail body text
+    :param title: section title shown above the table
+    :param report_config: docs_report / qa_report block (nickname)
+    :param config: community config dict
+    :param recipients: (key, email) pairs from resolve_recipients()
+    :param controls: email controls dict from load_email_controls()
+    :param compare_dict: week-over-week comparison info
+    :param extra_header: optional header of one extra trailing column
+    :param extra_fills: optional {cell value: fill color} for that extra column
+    """
+    if not rows:
+        log.logger.info('No rows for {}, skip {} email'.format(mail_type, mail_type))
+        return
+    test_email = os.getenv('test_reviever_email', '').strip()
+    test_mode = bool(test_email)
+    dry_run = os.getenv('DRY_RUN', '').strip().lower() == 'true'
+    test_user = os.getenv('TEST_USER', '').strip()
+    nickname = report_config.get('nickname') or config.get('display_name')
+    csv_path = '{}/{}.csv'.format(data_dir, csv_name)
+    with codecs.open(csv_path, 'w', encoding='utf-8') as f:
+        csv.writer(f).writerows(sort_rows_by_sig_duration(rows, 5 if is_issue else 6))
+    xlsx_path = csv_to_xlsx(csv_path)
+    excel_optimization(xlsx_path, compare_dict, is_issue=is_issue, extra_header=extra_header,
+                       extra_fills=extra_fills)
+    merged_html = merge_html_parts([(title, xlsx_path.replace('.xlsx', '.html'))], mail_type)
+    log.logger.info('Generated {} report with {} rows'.format(mail_type, len(rows)))
+    if dry_run:
+        write_dry_run_html(mail_type, 'all', merged_html)
+        return
+    if test_mode:
+        send_email('', nickname, [test_email], subject, body_text=body_text, html_content=merged_html)
+        log.logger.info('[TEST MODE] {} email sent to {}'.format(mail_type, test_email))
+        return
+    wanted = [(key, email) for key, email in recipients
+              if (not test_user or key == test_user) and should_send(controls, key, mail_type, 'receiver')]
+    if not wanted:
+        log.logger.warning('WARNING! No receiver for {} (receivers configured, controls or TEST_USER filtering)'.format(mail_type))
+        return
+    for key, email in wanted:
+        send_email('', nickname, [email], subject, body_text=body_text, html_content=merged_html)
+        log.logger.info('{} email sent to {}'.format(mail_type, email))
 
 
 # ---------------------------------------------------------------------------
@@ -260,47 +363,21 @@ def docs_statistics(data_dir, sigs, repos_pulls_mapping, repos_issues_mapping, c
         log.logger.info('[TEST USER] Only processing receiver: {}'.format(test_user))
     controls = load_email_controls()
     recipients = resolve_recipients(config)
-    nickname = docs_config.get('nickname') or config.get('display_name')
     pr_rows = collect_doc_pr_rows(sigs, repos_pulls_mapping, config)
     issue_rows = collect_doc_issue_rows(sigs, repos_issues_mapping, config)
     log.logger.info('Found {} doc related PRs and {} doc related issues'.format(len(pr_rows), len(issue_rows)))
 
-    def send_doc_report(mail_type, rows, is_issue, subject, body_text, title, extra_header=None):
-        """Render one community wide report and send it to the resolved receivers"""
-        if not rows:
-            log.logger.info('No {} found, skip {} email'.format('doc issue' if is_issue else 'doc pr', mail_type))
-            return
-        csv_path = '{}/doc_statistics_{}.csv'.format(data_dir, mail_type)
-        with codecs.open(csv_path, 'w', encoding='utf-8') as f:
-            csv.writer(f).writerows(sort_rows_by_sig_duration(rows, 5 if is_issue else 6))
-        xlsx_path = csv_to_xlsx(csv_path)
-        excel_optimization(xlsx_path, compare_dict, is_issue=is_issue, extra_header=extra_header,
-                           extra_fills=doc_status_fills(docs_config) if extra_header else None)
-        merged_html = merge_html_parts([(title, xlsx_path.replace('.xlsx', '.html'))], mail_type)
-        log.logger.info('Generated {} report with {} rows'.format(mail_type, len(rows)))
-        if dry_run:
-            write_dry_run_html(mail_type, 'all', merged_html)
-            return
-        if test_mode:
-            send_email('', nickname, [redirect_email], subject, body_text=body_text, html_content=merged_html)
-            log.logger.info('[TEST MODE] {} email sent to {}'.format(mail_type, redirect_email))
-            return
-        wanted = [(key, email) for key, email in recipients
-                  if (not test_user or key == test_user) and should_send(controls, key, mail_type, 'receiver')]
-        if not wanted:
-            log.logger.warning('WARNING! No receiver for {} (receivers configured, controls or TEST_USER filtering)'.format(mail_type))
-            return
-        for key, email in wanted:
-            send_email('', nickname, [email], subject, body_text=body_text, html_content=merged_html)
-            log.logger.info('{} email sent to {}'.format(mail_type, email))
-
-    send_doc_report('docs_pr', pr_rows, False,
-                    docs_config.get('subject_pr'), docs_config.get('body_pr'),
-                    '资料相关 PR（按 SIG 分组）',
-                    extra_header=docs_config.get('status_header'))
-    send_doc_report('docs_issue', issue_rows, True,
-                    docs_config.get('subject_issue'), docs_config.get('body_issue'),
-                    '资料相关 Issue（按 SIG 分组）')
+    send_community_report(data_dir, 'doc_statistics_docs_pr', 'docs_pr', pr_rows, False,
+                          docs_config.get('subject_pr'), docs_config.get('body_pr'),
+                          '资料相关 PR（按 SIG 分组）', docs_config, config, recipients,
+                          controls, compare_dict,
+                          extra_header=docs_config.get('status_header'),
+                          extra_fills=doc_status_fills(docs_config)
+                          if docs_config.get('status_header') else None)
+    send_community_report(data_dir, 'doc_statistics_docs_issue', 'docs_issue', issue_rows, True,
+                          docs_config.get('subject_issue'), docs_config.get('body_issue'),
+                          '资料相关 Issue（按 SIG 分组）', docs_config, config, recipients,
+                          controls, compare_dict)
 
 
 # ---------------------------------------------------------------------------

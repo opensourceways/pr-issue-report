@@ -8,6 +8,8 @@
 
 在此基础上还有一条**社区级**的「资料汇总」流水线（`docs_statistics.py`）：同样抓取全社区待处理项，但过滤出资料相关的部分，按 SIG 分组后发给固定的资料相关收件人名单，不做 reviewer 归属。
 
+第三条是**社区级**的「QA 社区汇总」流水线（`qa_statistics.py`）：不做内容过滤，把全部 SIG 的待处理 PR / Issue 按 SIG 分组后发给 QA SIG 的 maintainer，供质量保障侧掌握整体待办。
+
 ## 总体数据流
 
 ```
@@ -51,6 +53,8 @@
   └─ SMTP 发送（或 DRY_RUN 写入 <workdir>/test_output/）
 ```
 
+QA 社区汇总（`qa_statistics.py`）与资料汇总同构，区别只在：不传过滤条件（全量）、报表不带「资料状态」列、按 PR/Issue 链接去重（跨 SIG 重复登记的仓库只保留一条），邮件类型为 `qa_pr` / `qa_issue`。收件人不用硬编码：`receivers_sig` 指向的 SIG 成员在每次运行时从 `community/sig/<sig>/sig-info.yaml` 重新读取，成员/邮箱变动下一次运行即生效；`receivers` 只用于追加固定收件人，按邮箱去重。
+
 ## 核心文件
 
 | 文件 | 职责 |
@@ -58,6 +62,7 @@
 | `pr_statistics.py` | PR 统计入口：数据源分发、PR 状态标注、按 reviewer 聚合发邮件 |
 | `issue_statistics.py` | Issue 统计入口：同上，列布局少一列（无分支列），状态列为 类型/状态/负责人 |
 | `docs_statistics.py` | 资料汇总入口：复用上面的抓取，按资料口径过滤，社区级发两封（PR / Issue） |
+| `qa_statistics.py` | QA 社区汇总入口：复用抓取与渲染，不做过滤，全量两封（PR / Issue），链接去重 |
 | `common.py` | 全部共享能力（详见下节） |
 | `communities.yaml` | 社区差异的唯一配置出口（新增社区只改这里和加 Jenkins job） |
 | `email_controls.yaml` | 用户级邮件接收偏好（退订管理），支持 `communities.<社区名>` 按社区覆盖 |
@@ -102,6 +107,7 @@
 | `skip_sigs` | 跳过的 SIG（如 openEuler 的 Kernel） |
 | `mail_subject_*` / `mail_body_*` | 周报邮件标题与正文引导语 |
 | `docs_report` | 资料汇总配置块（仅 `docs_statistics.py` 读取），见下 |
+| `qa_report` | QA 社区汇总配置块（仅 `qa_statistics.py` 读取），见下 |
 
 `docs_report` 子字段：
 
@@ -116,13 +122,27 @@
 | `nickname` | 邮件开头称呼 |
 | `subject_pr` / `body_pr` / `subject_issue` / `body_issue` | 两封邮件的标题与正文引导语 |
 
+`qa_report` 子字段：
+
+| 字段 | 含义 |
+|---|---|
+| `enabled` | 是否启用 QA 汇总；关掉后 `qa_statistics.py` 直接退出 |
+| `workdir` | 独立运行目录（BoostKit 用 `boostkit-qa/`），使 QA job 与周报、资料 job 可并行 |
+| `receivers_sig` | 动态收件人 SIG（可选）：每次运行从 `community/sig/<sig>/sig-info.yaml` 读取当前成员，成员/邮箱变动无需改配置 |
+| `receiver_roles` | 动态收件人包含的角色，默认 `[maintainer]`，可加 `committer` |
+| `receivers` | 额外固定收件人（可选）：含 `@` 的条目直接当邮箱，否则当 gitcode_id 去 sig-info 邮箱映射里查；与动态成员按邮箱去重 |
+| `nickname` | 邮件开头称呼 |
+| `subject_pr` / `body_pr` / `subject_issue` / `body_issue` | 两封邮件的标题与正文引导语 |
+
+QA 汇总没有过滤字段：口径固定为「全部 SIG 的待处理 PR / Issue」。
+
 ## 三种测试/验证模式
 
 | 环境变量 | 行为 |
 |---|---|
-| `DRY_RUN=true` | 不连 SMTP，邮件 HTML 写入 `<workdir>/test_output/`（资料汇总为 `docs_pr_all.html` / `docs_issue_all.html`） |
-| `test_reviever_email=<addr>` | 真实发送但全部重定向到该地址，周报最多 3 封 PR + 3 封 Issue，资料汇总为 2 封 |
-| `TEST_USER=<gitcode_id>` | 只处理该用户（资料汇总为收件人 key），常配合 DRY_RUN 使用 |
+| `DRY_RUN=true` | 不连 SMTP，邮件 HTML 写入 `<workdir>/test_output/`（资料汇总为 `docs_pr_all.html` / `docs_issue_all.html`，QA 汇总为 `qa_pr_all.html` / `qa_issue_all.html`） |
+| `test_reviever_email=<addr>` | 真实发送但全部重定向到该地址，周报最多 3 封 PR + 3 封 Issue，资料/QA 汇总为 2 封 |
+| `TEST_USER=<gitcode_id>` | 只处理该用户（资料/QA 汇总为收件人 key），常配合 DRY_RUN 使用 |
 
 ## 已知设计取舍
 
@@ -131,4 +151,5 @@
 - **BoostKit 私有仓库缺席**：约 49 个私有仓库对当前 token 也不可见，报表不含这些仓库的 PR/Issue；如需覆盖要给 token 账号加权限。
 - **处理率对比仅 openEuler**：dsapi.osinfra.cn 只支持 openEuler，BoostKit 报表对比行为空。
 - **资料汇总是社区级邮件**：内容对所有收件人相同，因此不像周报那样按人渲染，只做一次渲染 + 多收件人扇出；邮件控制在 `email_controls.yaml` 里以 `docs_pr` / `docs_issue` 两个类型、单一 `receiver` 角色表达。
+- **QA 汇总是社区级邮件**：同样一次渲染 + 多收件人扇出，邮件类型为 `qa_pr` / `qa_issue`（单一 `receiver` 角色）。汇总不做过滤，但同一个 PR/Issue 可能因仓库被两个 SIG 登记而重复出现，因此在 `qa_statistics.py` 里按链接去重（保留遍历顺序中的第一条）。
 - **链接存成真实 Excel 超链接**：编号/标题单元格用 `cell.hyperlink` + 显示文本，而不是把 `<a href='...'>` 塞进单元格文本。后者只有在 `xlsx2html` 不转义单元格内容时才有效，而它自 0.6.4 起会转义——报表里就会显示成裸标签（`send_email()` 里曾有一段正则去还原，但 0.6.4 连引号一起转义，还原出来的 URL 是坏的）。现在两个版本导出的 HTML 逐字节一致，链接都可点，`requirements.txt` 因此只需要一条 `xlsx2html>=0.6.4` 下限（0.6.2 依赖已被 babel 2.18.0 删掉的 `number_re`，在全新环境里装不起来）。
