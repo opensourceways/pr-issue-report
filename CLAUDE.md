@@ -10,8 +10,9 @@ Entry points:
 - **`pr_statistics.py`** — PR statistics. Collects all open PRs, groups by reviewer, generates Excel/HTML reports and emails.
 - **`issue_statistics.py`** — Issue statistics. Same flow for issues, with its own column layout (no branch column).
 - **`docs_statistics.py`** — Documentation summary. Reuses the same collection, filters down to documentation-related items (PR by label, issue by title prefix or `issue_type`), and sends two community-wide emails to the receivers configured in `docs_report.receivers` — no per-reviewer grouping.
+- **`qa_statistics.py`** — QA community summary. Same collection with **no filtering**: every open PR / issue of every SIG, two community-wide emails to the current members of the SIG named by `qa_report.receivers_sig` (BoostKit: `QA`, read from `sig/QA/sig-info.yaml` on every run, so membership/email changes need no config edit). Rows are de-duplicated by item link because some repos are registered under two SIGs.
 
-Jenkins jobs: **`jenkins_job_openeuler.sh`** (openEuler), **`jenkins_job_boostkit.sh`** (BoostKit, checks `GITCODE_TOKEN`), and **`jenkins_job_boostkit_docs.sh`** (BoostKit docs summary, same token, runs in its own `boostkit-docs/` working directory so it can run alongside the weekly job).
+Jenkins jobs: **`jenkins_job_openeuler.sh`** (openEuler), **`jenkins_job_boostkit.sh`** (BoostKit, checks `GITCODE_TOKEN`), **`jenkins_job_boostkit_docs.sh`** (BoostKit docs summary, same token, runs in its own `boostkit-docs/` working directory), and **`jenkins_job_boostkit_qa.sh`** (BoostKit QA summary, same token, runs in `boostkit-qa/`).
 
 ## Build & Run
 
@@ -29,6 +30,9 @@ COMMUNITY=boostkit python3 issue_statistics.py
 
 # Run the docs summary for BoostKit (requires GITCODE_TOKEN; writes to boostkit-docs/)
 COMMUNITY=boostkit GITCODE_TOKEN=xxx python3 docs_statistics.py
+
+# Run the QA community summary for BoostKit (requires GITCODE_TOKEN; writes to boostkit-qa/)
+COMMUNITY=boostkit GITCODE_TOKEN=xxx python3 qa_statistics.py
 ```
 
 ### Docker
@@ -64,15 +68,18 @@ docker run -e SMTP_USERNAME=... -e SMTP_PASSWORD=... -e SMTP_HOST=... -e SMTP_PO
 
 `docs_statistics.py` runs the same steps 1–5 (one fetch serves both mails) and then filters: `is_doc_pr()` matches any label in `docs_report.pr_labels` (never `docs-ci-pipeline-*`: those are per-repo CI status labels that every PR of a pipeline-enabled repo carries), `is_doc_issue()` matches the title prefix **or** `issue_type` (union — some issues only carry one of the two). Rows are built by `build_pr_row()` / `build_issue_row()`, which mirror the weekly reports' column layout and status wording, then sorted with `sort_rows_by_sig_duration()` and sent as two community-wide mails (`docs_pr`, `docs_issue`). The PR report appends one extra column showing the documentation label state (`doc_status()` → text + fill from `docs_report.status_labels`, rendered via `excel_optimization(extra_header=..., extra_fills=...)`); the Issue report has no such column because issues carry no doc review labels.
 
+`qa_statistics.py` reuses the same collection helpers (`collect_pr_rows()` / `collect_issue_rows()` with no predicate) and the same rendering/sending function `send_community_report()` from `docs_statistics.py`, but sends the two community-wide mails (`qa_pr`, `qa_issue`) to the SIG members resolved by `resolve_recipients(config, 'qa_report')` with no filtering and no extra column. `receivers_sig: QA` + `receiver_roles: [maintainer]` make `get_sig_members()` re-read `sig/QA/sig-info.yaml` each run, so upstream membership changes apply automatically; explicit `receivers` are appended and de-duplicated by email. Rows are de-duplicated by item link (`dedupe_rows()`) because repos such as `CubeSandbox` and `MicroservicesBench` are registered under two SIGs.
+
 ### Key config
 
 - **`communities.yaml`** — Per-community settings: community repo URL, orgs, data source (`ipb` aggregate API vs `gitcode_api` per-repo GitCode API), CLA/CI/wait-update labels (empty string disables that check), processed-rate mode (`dsapi` vs `none`), skipped SIGs, and mail subject/body texts. Loaded by `load_community_config()` relative to `common.py`'s path, cached per name.
-- **`email_controls.yaml`** — Per-user email preferences (which mail types and role parts each gitee_id receives). Mail types and their roles are registered in `common.MAIL_TYPES` (`pr`/`issue` with maintainer+committer, `docs_pr`/`docs_issue` with a single `receiver`) — register new types there, not in `expand_controls()`. Users not listed receive everything; see README for the syntax. Path overridable via `EMAIL_CONTROLS_PATH`.
+- **`email_controls.yaml`** — Per-user email preferences (which mail types and role parts each gitee_id receives). Mail types and their roles are registered in `common.MAIL_TYPES` (`pr`/`issue` with maintainer+committer, `docs_pr`/`docs_issue`/`qa_pr`/`qa_issue` with a single `receiver`) — register new types there, not in `expand_controls()`. Users not listed receive everything; see README for the syntax. Path overridable via `EMAIL_CONTROLS_PATH`.
 - **Boosting (docs) settings** live in the `docs_report` block of the community entry: `enabled`, `workdir`, `pr_labels`, `issue_title_prefix`, `issue_type`, `receivers` (an entry containing `@` is used as an email directly, otherwise it is looked up as a gitcode_id in the sig-info email mapping), `nickname`, and the two subject/body pairs.
+- **QA summary settings** live in the `qa_report` block: `enabled`, `workdir` (`boostkit-qa`), `receivers_sig` (`QA`), `receiver_roles` (default `[maintainer]`; add `committer` if needed), optional extra `receivers`, `nickname`, and the two subject/body pairs. There are no filtering keys — the whole community is always reported.
 - Maintainers are **always** included as reviewers, regardless of whether a repo has committers. Committers are added as additional reviewers when present.
 
 ### Common patterns
 
 - Logging goes to both stdout and `statistics.log` (timed rotation, 3 backups), inside the per-community working directory.
 - Working directory is `/work/pr-statistics` in Docker; scripts run from repo root.
-- Temporary `data/` and `community/` directories are created at runtime inside the working directory (`openeuler/`, `boostkit/`, or `boostkit-docs/`); `community/` is cloned fresh each run.
+- Temporary `data/` and `community/` directories are created at runtime inside the working directory (`openeuler/`, `boostkit/`, `boostkit-docs/`, or `boostkit-qa/`); `community/` is cloned fresh each run.
