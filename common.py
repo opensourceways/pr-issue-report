@@ -675,6 +675,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         headers.append(extra_header)
     alignment_center = Alignment(horizontal='center', vertical='center')
     insert_count = 0
+    original_header_row = None
     for i in sorted(insert_rows.keys()):
         sig_name = insert_rows[i]
         i += insert_count
@@ -686,28 +687,39 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         ws.merge_cells(start_row=i, end_row=i, start_column=1, end_column=max_col)
         ws['A' + str(i)].alignment = alignment_center
 
+        # the compare row is skipped when no comparison data is available (e.g. the
+        # boostkit sigs are not covered by the openEuler processed-rate API), so that
+        # the mail does not show an empty line below every sig name
         compare_info = single_sig_compare(sig_name, compare_dict)
-        ws.insert_rows(i + 1)
-        insert_count += 1
-        ws['A' + str(i + 1)] = compare_info
-        ws['A' + str(i + 1)].font = Font(name='黑体', color='FF0000')
-        ws['A' + str(i + 1)].alignment = alignment_center
-        ws.merge_cells(start_row=i + 1, end_row=i + 1, start_column=1, end_column=max_col)
+        next_row = i + 1
+        if compare_info:
+            ws.insert_rows(next_row)
+            insert_count += 1
+            ws['A' + str(next_row)] = compare_info
+            ws['A' + str(next_row)].font = Font(name='黑体', color='FF0000')
+            ws['A' + str(next_row)].alignment = alignment_center
+            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
+            next_row += 1
 
-        ws.insert_rows(i + 2)
+        ws.insert_rows(next_row)
         insert_count += 1
         for idx, header in enumerate(headers):
-            cell = ws[chr(65 + idx) + str(i + 2)]
+            cell = ws[chr(65 + idx) + str(next_row)]
             cell.value = header
             cell.font = Font(bold=True)
             cell.alignment = alignment_center
+        if original_header_row is None:
+            # the first sheet row holds the header (and the values of the first data row);
+            # only the rows inserted by the first block are above it
+            original_header_row = next_row + 1
 
     # replace the original table header
-    ws.insert_rows(5)
-    for idx in range(len(headers)):
-        col = chr(65 + idx)
-        ws[col + '5'] = ws[col + '4'].value
-    ws.delete_rows(4)
+    if original_header_row:
+        ws.insert_rows(original_header_row + 1)
+        for idx in range(len(headers)):
+            col = chr(65 + idx)
+            ws[col + str(original_header_row + 1)] = ws[col + str(original_header_row)].value
+        ws.delete_rows(original_header_row)
     # fill for the Duration column
     cells = ws.iter_rows(min_row=3, min_col=duration_col, max_col=duration_col)
     yellow_fill = PatternFill("solid", start_color='FFFF00')
