@@ -521,6 +521,15 @@ class TestLinkifyCells:
 # excel_optimization
 # ---------------------------------------------------------------------------
 
+def _sheet_rows(xlsx):
+    """Return the active sheet as a list of lists of cell values."""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx)
+    rows = [[c.value for c in row] for row in wb.active.iter_rows()]
+    wb.close()
+    return rows
+
+
 class TestExcelOptimization:
     def _make_xlsx(self, tmp_path, csv_content, filename='test'):
         """Helper: create CSV → convert to XLSX → return xlsx path."""
@@ -672,6 +681,38 @@ class TestExcelOptimization:
         # Should not raise
         excel_optimization(xlsx, compare_dict_sample, is_issue=False)
         assert os.path.exists(xlsx.replace('.xlsx', '.html'))
+
+    def test_compare_row_kept_when_available(self, tmp_path, compare_dict_sample):
+        """A SIG with comparison data keeps its compare row below the SIG name."""
+        csv = (
+            'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR</a>,待合入,3\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'compare_kept')
+        excel_optimization(xlsx, compare_dict_sample, is_issue=False)
+        rows = _sheet_rows(xlsx)
+        assert rows[0][0] == 'sig-ai'
+        assert rows[1][0] == compare_dict_sample['sig-ai']
+        assert rows[2][0] == '仓库'
+
+    def test_no_blank_row_when_compare_info_missing(self, tmp_path):
+        """A SIG without comparison data goes straight to the table header (no empty line).
+
+        The boostkit sigs are not covered by the openEuler processed-rate API, so the
+        compare text is empty there; the mail used to show a blank row below every SIG name.
+        """
+        csv = (
+            'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR</a>,待合入,3\n'
+            'sig-base,openeuler/kernel,main,<a href="#">#2</a>,<a href="#">PR2</a>,待合入,5\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'compare_missing')
+        excel_optimization(xlsx, {}, is_issue=False)
+        rows = _sheet_rows(xlsx)
+        assert rows[0][0] == 'sig-ai'
+        assert rows[1][0] == '仓库'
+        assert rows[2][0] == 'openeuler/ai-framework'    # first data row, SIG column removed
+        assert rows[3][0] == 'sig-base'
+        assert rows[4][0] == '仓库'
+        assert rows[5][0] == 'openeuler/kernel'
 
 
 # ---------------------------------------------------------------------------
