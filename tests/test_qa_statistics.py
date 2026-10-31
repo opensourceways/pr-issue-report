@@ -125,8 +125,10 @@ class TestQaStatistics:
         assert sorted(s[2] for s in reports) == sorted(
             ['BoostKit 社区待处理 PR 汇总（全量）'] * 2 +
             ['BoostKit 社区待处理 Issue 汇总（全量）'] * 2)
-        for _, receivers, _, _ in reports:
+        for nickname, receivers, _, _ in reports:
             assert receivers in ([QA_RECEIVERS[0]], [QA_RECEIVERS[1]])
+            # the greeting is the receiver key, so each maintainer can tell the mail is theirs
+            assert nickname == receivers[0]
 
     def test_every_item_is_reported_without_doc_filtering(self, tmp_path, sigs_sample,
                                                           compare_dict_sample, reports):
