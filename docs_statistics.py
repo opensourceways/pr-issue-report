@@ -329,7 +329,9 @@ def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject
         log.logger.warning('WARNING! No receiver for {} (receivers configured, controls or TEST_USER filtering)'.format(mail_type))
         return
     for key, email in wanted:
-        send_email('', nickname, [email], subject, body_text=body_text, html_content=merged_html)
+        # greet each receiver by its own id so the mail itself shows who it is addressed to;
+        # the report content is still the same for everybody
+        send_email('', key, [email], subject, body_text=body_text, html_content=merged_html)
         log.logger.info('{} email sent to {}'.format(mail_type, email))
 
 
