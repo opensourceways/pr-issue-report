@@ -4,7 +4,7 @@
 
 另有「资料汇总」流水线：把全社区**资料相关**（文档）的待处理 PR / Issue 汇总成两封社区级邮件，直接发给资料相关的固定收件人名单，不按 maintainer/committer 分发。入口是 `docs_statistics.py`。
 
-还有「QA 社区汇总」流水线：把**全部 SIG 的待处理 PR / Issue 全量**汇总成两封社区级邮件，发给 QA SIG 的 maintainer，用于质量保障侧掌握整体待办。入口是 `qa_statistics.py`。
+还有「QA 社区汇总」流水线：把**全部 SIG 的待处理 PR / Issue 全量**汇总成两封社区级邮件，发给 QA SIG 的 maintainer，用于质量保障侧掌握整体待办。入口是 `qa_statistics.py`。周三的构建会在正文顶部附一段「闭环趋势」（上上周三~上周三、上周三~本周三 两周对比），周五的构建只发常规提醒。
 
 ## 项目结构
 
@@ -48,6 +48,7 @@
 | `EMAIL_CONTROLS_PATH` | 控制文件路径，默认 `email_controls.yaml` |
 | `COMMUNITY` | 目标社区，默认 `openeuler`，可选 `boostkit`（见 communities.yaml；资料/QA 汇总同样用 `boostkit`） |
 | `GITCODE_TOKEN` | GitCode API 访问令牌，boostkit 周报、资料汇总与 QA 汇总 job 必需 |
+| `QA_CLOSURE_TREND` | QA 汇总的布尔开关：`true` 强制本次生成闭环趋势（任意一天预览用）；不设置/false 时按周三自动 |
 
 ## 多社区支持
 
@@ -58,6 +59,7 @@
 - BoostKit 的 CI 失败标签未知，第一版不检测（`ci_failed_label` 为空串表示跳过该检查）。
 - 「资料汇总」是同一个社区的第二条流水线（入口 `docs_statistics.py`），不是新社区：`COMMUNITY` 仍是 `boostkit`，但运行目录由 `docs_report.workdir` 指定为 `boostkit-docs/`，因此可以和周报 job 并行跑而互不干扰。社区级资料配置（口径、收件人、邮件文案）都在 `communities.yaml` 的 `docs_report` 块里。
 - 「QA 社区汇总」是第三条流水线（入口 `qa_statistics.py`），同样属于 `boostkit`，运行目录由 `qa_report.workdir` 指定为 `boostkit-qa/`，可与周报、资料汇总并行。它不做内容过滤，汇总全部 SIG 的待处理 PR / Issue；跨 SIG 重复登记的仓库（如 `CubeSandbox`、`MicroservicesBench`）按 PR/Issue 链接去重。收件人不写死：每次运行从 `sig/QA/sig-info.yaml` 动态读取当前 maintainer（`receivers_sig: QA`），成员/邮箱变动下一次运行即生效；`receivers` 仅用于追加额外固定收件人。
+- QA 汇总的「闭环趋势」只在**周三**的构建里渲染（对比上上周三~上周三、上周三~本周三两个 7 天窗口），**周五**只发常规 PR/Issue 提醒。非周三想提前看效果，勾选 Jenkins 的布尔参数 `QA_CLOSURE_TREND` 手动构建即可；趋势数据每次按时间戳现算，不依赖历史快照。
 
 ## 邮件接收控制
 
@@ -138,6 +140,7 @@ COMMUNITY=boostkit GITCODE_TOKEN=xxx python3 qa_statistics.py
 - 资料口径：PR 带 `docs_report.pr_labels` 中任一标签即算（`need-doc-sig-review` / `doc-sig-reviewed` / `sig/doc` / `ai-docs-only` 等）；Issue 是标题以 `[资料]:` 开头**或** `issue_type` 为「资料」。注意 `docs-ci-pipeline-*` 是仓库级 CI 状态标签，不作为资料信号。
 - 资料 PR 报表比周报多一列**「资料状态」**，直接体现资料标签状态，一眼看出哪些还需要处理：`待资料评审`（黄色，还等资料 SIG 评审）、`资料已评审`（绿色，已通过）。文案与底色在 `docs_report.status_labels` 配置；Issue 报表没有这一列（Issue 没有资料评审标签）。
 - QA 社区汇总：固定两封邮件（全社区 PR 汇总、全社区 Issue 汇总），**社区级**、不做内容过滤、不按角色分部分，发给 `qa_report.receivers_sig` 指向的 SIG 当前成员（BoostKit 为 `QA` 的 maintainer，动态读取），可再通过 `receivers` 追加固定收件人。列布局与周报一致（PR 含目标分支，Issue 不含），一个 PR/Issue 只出现一次（重复登记仓库已去重）。
+- QA 趋势区（仅周三）：正文顶部一张全社区总表 + 一张各 SIG 汇总表，6 列（统计区间 / 待处理 / 超期 / 严重超期 / 期间闭环 / 闭环率），闭环率 = 期间闭环 /（期间闭环 + 待处理），两行可直接对比。周三邮件因此不再渲染明细表里的 SIG 单行汇总（趋势区已含当天快照）；周五邮件既无趋势区，也不渲染 SIG 汇总行，只保留常规 PR/Issue 明细。
 - 邮件底部提供退订说明，退订请求发送至 `huanglei227@h-partners.com`。
 - openEuler 的 Kernel SIG 默认跳过（由 `communities.yaml` 的 `skip_sigs` 配置控制）。
 
@@ -158,4 +161,7 @@ COMMUNITY=boostkit GITCODE_TOKEN=xxx DRY_RUN=true python3 docs_statistics.py
 
 # QA 社区汇总：本地生成 HTML（产物在 boostkit-qa/test_output/qa_{pr,issue}_all.html）
 COMMUNITY=boostkit GITCODE_TOKEN=xxx DRY_RUN=true python3 qa_statistics.py
+
+# 非周三预览闭环趋势（强制本次生成趋势区）
+COMMUNITY=boostkit GITCODE_TOKEN=xxx DRY_RUN=true QA_CLOSURE_TREND=true python3 qa_statistics.py
 ```
