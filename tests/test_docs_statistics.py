@@ -285,7 +285,8 @@ class TestDocsStatistics:
         self.render_calls = []
         monkeypatch.setattr('docs_statistics.csv_to_xlsx', lambda c: c.replace('.csv', '.xlsx'))
 
-        def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None):
+        def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None,
+                       sig_trends=None):
             self.render_calls.append({'is_issue': is_issue, 'extra_header': extra_header,
                                       'extra_fills': extra_fills})
             with open(xlsx_path.replace('.xlsx', '.html'), 'w', encoding='utf-8') as f:

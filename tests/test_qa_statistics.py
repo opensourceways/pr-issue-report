@@ -7,8 +7,9 @@ import pytest
 import yaml
 
 from docs_statistics import resolve_recipients
-from qa_statistics import (build_closure_trend, dedupe_rows, main, month_trend_window,
-                           qa_statistics, render_closure_trend, trigger_days)
+from qa_statistics import (build_closure_trend, build_sig_trends, dedupe_rows, main,
+                           month_trend_window, qa_statistics, render_closure_trend,
+                           repo_of_link, repo_sig_mapping, trigger_days)
 
 QA_RECEIVERS = ['mengjiefamily@163.com', 'lcxzydhyy@163.com']
 
@@ -97,7 +98,8 @@ class TestQaStatistics:
         self.render_calls = []
         monkeypatch.setattr('docs_statistics.csv_to_xlsx', lambda c: c.replace('.csv', '.xlsx'))
 
-        def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None):
+        def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None,
+                       sig_trends=None):
             self.render_calls.append({'is_issue': is_issue, 'extra_header': extra_header,
                                       'extra_fills': extra_fills})
             with open(xlsx_path.replace('.xlsx', '.html'), 'w', encoding='utf-8') as f:
@@ -183,8 +185,9 @@ class TestQaStatistics:
     def test_closure_trend_prepended_when_enabled(self, tmp_path, monkeypatch, sigs_sample,
                                                    compare_dict_sample, reports):
         pulls, issues = self._mappings()
-        monkeypatch.setattr('qa_statistics.closure_trend_html',
-                            lambda sigs, kind, mapping, label: '<h3>TREND-{}</h3>'.format(label))
+        monkeypatch.setattr('qa_statistics.build_trends', lambda *a, **kw: ({}, {'QA': {}}))
+        monkeypatch.setattr('qa_statistics.render_closure_trend',
+                            lambda trend, label: '<h3>TREND-{}</h3>'.format(label))
         qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample,
                       _config(closure_trend=True))
         pr_mail = [s for s in reports if 'PR' in s[2]][0]
@@ -195,8 +198,10 @@ class TestQaStatistics:
     def test_no_trend_without_the_config_flag(self, tmp_path, monkeypatch, sigs_sample,
                                                compare_dict_sample, reports):
         pulls, issues = self._mappings()
-        monkeypatch.setattr('qa_statistics.closure_trend_html',
-                            lambda *a, **kw: '<h3>TREND</h3>')
+        monkeypatch.setattr('qa_statistics.build_trends',
+                            lambda *a, **kw: ({}, {}))
+        monkeypatch.setattr('qa_statistics.render_closure_trend',
+                            lambda trend, label: '<h3>TREND</h3>')
         qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample, _config())
         assert all('TREND' not in s[3] for s in reports)
 
@@ -275,6 +280,55 @@ class TestClosureTrendNumbers:
     def test_empty_period_has_no_rate(self):
         trend = build_closure_trend([], [], today=datetime.date(2026, 11, 5))
         assert trend['rows'][-1]['rate'] is None
+
+
+class TestSigTrends:
+    def test_repository_maps_to_the_first_sig_listing_it(self):
+        sigs = [{'name': 'A', 'repositories': ['boostkit/x', 'boostkit/shared']},
+                {'name': 'B', 'repositories': ['boostkit/shared', 'boostkit/y']}]
+        assert repo_sig_mapping(sigs, {'orgs': ['boostkit'], 'skip_sigs': []}) == {
+            'boostkit/x': 'A', 'boostkit/shared': 'A', 'boostkit/y': 'B'}
+
+    def test_skipped_sigs_and_foreign_orgs_are_dropped(self):
+        sigs = [{'name': 'Kernel', 'repositories': ['boostkit/k']},
+                {'name': 'A', 'repositories': ['other/x', 'boostkit/y']}]
+        assert repo_sig_mapping(sigs, {'orgs': ['boostkit'], 'skip_sigs': ['Kernel']}) == {
+            'boostkit/y': 'A'}
+
+    def test_repo_of_link(self):
+        assert repo_of_link('https://gitcode.com/boostkit/community/pulls/1') == 'boostkit/community'
+        assert repo_of_link('') == ''
+
+    def test_each_sig_gets_its_own_series(self):
+        open_items = [
+            {'link': 'https://gitcode.com/boostkit/a/issues/1', 'created_at': '2026-09-01 10:00:00'},
+            {'link': 'https://gitcode.com/boostkit/b/issues/2', 'created_at': '2026-11-02 10:00:00'},
+        ]
+        trends = build_sig_trends(open_items, [], {'boostkit/a': 'A', 'boostkit/b': 'B'},
+                                  today=datetime.date(2026, 11, 5))
+        assert set(trends) == {'A', 'B'}
+        assert trends['A']['rows'][-1]['backlog'] == 1
+        assert trends['B']['rows'][-1]['backlog'] == 1
+        # only the September item is severely overdue on 11-05
+        assert trends['A']['rows'][-1]['severe'] == 1
+        assert trends['B']['rows'][-1]['severe'] == 0
+
+    def test_overdue_buckets_use_7_and_30_days(self):
+        open_items = [
+            {'link': 'https://gitcode.com/boostkit/a/issues/1', 'created_at': '2026-11-01 10:00:00'},
+            {'link': 'https://gitcode.com/boostkit/a/issues/2', 'created_at': '2026-10-20 10:00:00'},
+            {'link': 'https://gitcode.com/boostkit/a/issues/3', 'created_at': '2026-09-01 10:00:00'},
+        ]
+        trends = build_sig_trends(open_items, [], {'boostkit/a': 'A'},
+                                  today=datetime.date(2026, 11, 5))
+        point = trends['A']['rows'][-1]
+        # 4 days / 16 days / 65 days → only the last two are overdue, the last one severe
+        assert (point['backlog'], point['overdue'], point['severe']) == (3, 2, 1)
+
+    def test_sig_without_items_in_the_window_is_omitted(self):
+        trends = build_sig_trends([], [], {'boostkit/a': 'A'},
+                                  today=datetime.date(2026, 11, 5))
+        assert trends == {}
 
 
 class TestClosureTrendRendering:

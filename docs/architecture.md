@@ -132,7 +132,7 @@ QA 社区汇总（`qa_statistics.py`）与资料汇总同构，区别只在：�
 | `receivers_sig` | 动态收件人 SIG（可选）：每次运行从 `community/sig/<sig>/sig-info.yaml` 读取当前成员，成员/邮箱变动无需改配置 |
 | `receiver_roles` | 动态收件人包含的角色，默认 `[maintainer]`，可加 `committer` |
 | `receivers` | 额外固定收件人（可选）：含 `@` 的条目直接当邮箱，否则当 gitcode_id 去 sig-info 邮箱映射里查；与动态成员按邮箱去重 |
-| `closure_trend` | 是否在邮件顶部追加「当月闭环趋势」（BoostKit 已开启）：上月最后一个自然周 + 当月每次触发（周三/周五）的累计新增、累计闭环、闭环率、未闭环存量 |
+| `closure_trend` | 是否追加「当月闭环趋势」（BoostKit 已开启）：正文顶部一张全社区总表，同时每个 SIG 名称下插一张 5 列小表（时间 / 待处理 / 超期 / 严重超期 / 闭环率） |
 | `nickname` | 邮件开头称呼 |
 | `subject_pr` / `body_pr` / `subject_issue` / `body_issue` | 两封邮件的标题与正文引导语 |
 
@@ -140,13 +140,15 @@ QA 汇总没有过滤字段：口径固定为「全部 SIG 的待处理 PR / Iss
 
 ### 闭环趋势（`qa_report.closure_trend`）
 
-QA 两封邮件正文最上方各有一段当月闭环趋势表（PR 邮件放 PR、Issue 邮件放 Issue），实现见 `qa_statistics.py`：
+QA 邮件里有两处趋势：正文最上方一张全社区总表（PR 邮件放 PR、Issue 邮件放 Issue），以及每个 SIG 名称下的 5 列小表。实现见 `qa_statistics.py`：
 
 - **窗口**：上月最后一个自然周（周一~周日，截止月末）作为一行基准，之后按周三/周五（`TREND_WEEKDAYS`）逐次取点，最后补当天。
-- **无状态重算**：每次运行用 `state=all&since=<窗口起点>` 重新拉取窗口内所有变更过的项，按 `created_at` / `merged_at`（PR）或 `finished_at`（Issue）现算，不落盘、不依赖上一次运行，因此触发频率不影响曲线粒度。
-- **口径**：PR 以 merged 或 closed 为闭环，Issue 以 state=closed 为闭环；闭环率 = 累计闭环 /（期初未闭环 + 累计新增），期初未闭环 = 当月开始时仍未关闭的项（含上月遗留、当月内才关闭的）。
+- **SIG 小表列**：时间 / 待处理 / 超期（>7 天）/ 严重超期（>30 天，原「严重 + 长期」合并）/ 闭环率。因最后一行就是当日快照，开启后 QA 邮件不再渲染单行 SIG 汇总（`sig_trends` 存在时跳过 `sig_stats`）。
+- **SIG 归属**：按仓库归属反推（`repo_sig_mapping()`），规则与明细表一致——按 `get_sigs()` 顺序，同一仓库只归第一个登记它的 SIG，并跳过 `skip_sigs` 与非 `orgs` 仓库。跨 SIG 重复登记的仓库因此不会重复计数。
+- **无状态重算**：每次运行用 `state=all&since=<窗口起点>` 重新拉取窗口内所有变更过的项（PR、Issue 各一轮），按 `created_at` / `merged_at`（PR）或 `finished_at`（Issue）现算，不落盘、不依赖上一次运行，因此触发频率不影响曲线粒度。
+- **口径**：PR 以 merged 或 closed 为闭环，Issue 以 state=closed 为闭环；闭环率 = 累计闭环 /（期初未闭环 + 累计新增），期初未闭环 = 统计起点仍未关闭的项（含上月遗留、当月内才关闭的）。
 - **去重**：同一链接在 open 映射与历史列表中只保留一条，重开项按 open 计。
-- **渲染**：纯 HTML 表格 + CSS 横条，无新增依赖；表下注明「仅统计 GitCode API 可见仓库」，私有仓库不计入。
+- **渲染**：总表是纯 HTML 表格 + CSS 横条；SIG 小表由 `excel_optimization(sig_trends=...)` 插在 SIG 名称下方（表头浅灰 `F2F2F2`，数据行不参与开启天数/状态的配色）。无新增依赖；表下注明「仅统计 GitCode API 可见仓库」，私有仓库不计入。
 
 ## 三种测试/验证模式
 

@@ -93,7 +93,7 @@ def item_records(open_items, history_items):
     A reopened item is listed as open again, so the open record wins.
     :param open_items: items of the current open mapping
     :param history_items: items from gitcode_history_items()
-    :return: list of (created_day, closed_day or None)
+    :return: {link: (created_day, closed_day or None)}
     """
     records = {}
     open_links = set()
@@ -110,40 +110,52 @@ def item_records(open_items, history_items):
             continue
         records[link] = (item['created_at'].date(),
                          item['closed_at'].date() if item['closed_at'] else None)
-    return list(records.values())
+    return records
 
 
-def build_closure_trend(open_items, history_items, today=None):
+def _rate_text(rate):
+    """Render a closure rate as a percentage, or '-' when the denominator is zero."""
+    return '-' if rate is None else '{:.1f}%'.format(rate * 100)
+
+
+def trend_points(records, today=None):
     """
-    Compute the cumulative closure trend of one item kind (PR or Issue).
-    The denominator is the backlog still open when the period starts plus everything
-    created since, so a rate below 100% means the period cannot yet close what it
-    inherited.
-    :param open_items: items of the current open mapping
-    :param history_items: items from gitcode_history_items()
+    Build the baseline row (previous month's last natural week) and one row per
+    Wednesday/Friday trigger plus today, all cumulative from their own period start.
+    :param records: list of (created_day, closed_day or None)
     :param today: date of the run, defaults to the current date in UTC+8
-    :return: {'month_label', 'window_row', 'rows'}
+    :return: (window_row, rows); every point carries label, new, closed, rate, rate_text,
+             backlog, overdue and severe
     """
     today = today or datetime.datetime.now(GITCODE_TZ).date()
     window_start, month_start = month_trend_window(today)
-    records = item_records(open_items, history_items)
+    overdue_days = DURATION_STAGES[0][0]      # 7
+    severe_days = DURATION_STAGES[1][0]       # 30, 严重与长期合并
 
     def backlog_at(start_day):
         """Items not closed yet when start_day begins."""
         return sum(1 for created, closed in records
                    if created < start_day and (closed is None or closed >= start_day))
 
+    def stock_at(day):
+        """Open items on that day, split by age."""
+        live = [created for created, closed in records
+                if created <= day and (closed is None or closed > day)]
+        return {
+            'backlog': len(live),
+            'overdue': sum(1 for created in live if (day - created).days > overdue_days),
+            'severe': sum(1 for created in live if (day - created).days > severe_days),
+        }
+
     def summarize(start_day, end_day, base):
         new = sum(1 for created, _ in records if start_day <= created <= end_day)
         closed = sum(1 for _, closed in records
                      if closed and start_day <= closed <= end_day)
         denominator = base + new
-        return {
-            'new': new,
-            'closed': closed,
-            'rate': (closed / denominator) if denominator else None,
-            'backlog': denominator - closed,
-        }
+        rate = (closed / denominator) if denominator else None
+        point = stock_at(end_day)
+        point.update({'new': new, 'closed': closed, 'rate': rate, 'rate_text': _rate_text(rate)})
+        return point
 
     prev_month_last = month_start - datetime.timedelta(days=1)
     window_row = summarize(window_start, prev_month_last, backlog_at(window_start))
@@ -159,17 +171,105 @@ def build_closure_trend(open_items, history_items, today=None):
         # a manual run off schedule still reports up to the current day
         days.append(today)
 
-    rows = []
     base_month = backlog_at(month_start)
+    rows = []
     for day in days:
-        row = summarize(month_start, day, base_month)
+        point = summarize(month_start, day, base_month)
         if day == today:
-            row['label'] = '{}（当天）'.format(day.strftime('%m-%d'))
+            point['label'] = '{}（当天）'.format(day.strftime('%m-%d'))
         else:
-            row['label'] = '{}（周{}）'.format(day.strftime('%m-%d'), '一二三四五六日'[day.weekday()])
-        rows.append(row)
+            point['label'] = '{}（周{}）'.format(day.strftime('%m-%d'), '一二三四五六日'[day.weekday()])
+        rows.append(point)
+    return window_row, rows
 
+
+def build_closure_trend(open_items, history_items, today=None):
+    """
+    Compute the community wide closure trend of one item kind (PR or Issue).
+    The denominator is the backlog still open when the period starts plus everything
+    created since, so a rate below 100% means the period cannot yet close what it
+    inherited.
+    :param open_items: items of the current open mapping
+    :param history_items: items from gitcode_history_items()
+    :param today: date of the run, defaults to the current date in UTC+8
+    :return: {'month_label', 'window_row', 'rows'}
+    """
+    today = today or datetime.datetime.now(GITCODE_TZ).date()
+    _, month_start = month_trend_window(today)
+    window_row, rows = trend_points(list(item_records(open_items, history_items).values()), today)
     return {'month_label': '{} 月'.format(month_start.month), 'window_row': window_row, 'rows': rows}
+
+
+def repo_of_link(link):
+    """'https://gitcode.com/org/repo/pulls/1' → 'org/repo'."""
+    parts = str(link or '').split('/', 3)
+    if len(parts) < 4:
+        return ''
+    return '/'.join(parts[3].split('/')[:2])
+
+
+def repo_sig_mapping(sigs, config):
+    """
+    Map every repository to the SIG the reports attribute it to: the first SIG (in the
+    order collect_*_rows walks them) that lists it, skipping ignored SIGs and orgs.
+    :param sigs: sigs list from get_sigs()
+    :param config: community config dict
+    :return: {repo: sig_name}
+    """
+    orgs_lower = [org.lower() for org in config['orgs']]
+    mapping = {}
+    for sig in sigs:
+        if sig['name'] in (config.get('skip_sigs') or []):
+            continue
+        for repo in sig['repositories']:
+            if repo.split('/')[0].lower() not in orgs_lower:
+                continue
+            mapping.setdefault(repo, sig['name'])
+    return mapping
+
+
+def build_sig_trends(open_items, history_items, repo_sig, today=None):
+    """
+    Build the same trend per SIG, attributed by repository like the detail table.
+    :param open_items: items of the current open mapping
+    :param history_items: items from gitcode_history_items()
+    :param repo_sig: {repo: sig_name} from repo_sig_mapping()
+    :param today: date of the run, defaults to the current date in UTC+8
+    :return: {sig_name: {'month_label', 'window_row', 'rows'}}; SIGs without any item
+             in the window are omitted
+    """
+    today = today or datetime.datetime.now(GITCODE_TZ).date()
+    _, month_start = month_trend_window(today)
+    grouped = {}
+    for link, record in item_records(open_items, history_items).items():
+        sig_name = repo_sig.get(repo_of_link(link))
+        if sig_name:
+            grouped.setdefault(sig_name, []).append(record)
+    trends = {}
+    for sig_name, records in grouped.items():
+        window_row, rows = trend_points(records, today)
+        trends[sig_name] = {'month_label': '{} 月'.format(month_start.month),
+                            'window_row': window_row, 'rows': rows}
+    return trends
+
+
+def build_trends(sigs, kind, open_mapping, repo_sig, today=None):
+    """
+    Fetch the history window once and build both the community wide and the per-SIG trend.
+    :param sigs: sigs list from get_sigs()
+    :param kind: 'pulls' or 'issues'
+    :param open_mapping: current open mapping from get_repos_*_mapping()
+    :param repo_sig: {repo: sig_name} from repo_sig_mapping()
+    :param today: date of the run, defaults to the current date in UTC+8
+    :return: (total_trend, sig_trends)
+    """
+    today = today or datetime.datetime.now(GITCODE_TZ).date()
+    window_start, _ = month_trend_window(today)
+    since = datetime.datetime.combine(window_start, datetime.time.min, tzinfo=GITCODE_TZ)
+    history = gitcode_history_items(sigs, kind, since.isoformat())
+    open_items = list(open_mapping.values())
+    return (build_closure_trend(open_items, history, today),
+            build_sig_trends(open_items, history, repo_sig, today))
 
 
 def render_closure_trend(trend, label):
@@ -209,23 +309,6 @@ def render_closure_trend(trend, label):
     return ''.join(parts)
 
 
-def closure_trend_html(sigs, kind, open_mapping, label, today=None):
-    """
-    Fetch the history window and render one closure trend section.
-    :param sigs: sigs list from get_sigs()
-    :param kind: 'pulls' or 'issues'
-    :param open_mapping: current open mapping from get_repos_*_mapping()
-    :param label: 'PR' or 'Issue'
-    :param today: date of the run, defaults to the current date in UTC+8
-    :return: HTML string
-    """
-    today = today or datetime.datetime.now(GITCODE_TZ).date()
-    window_start, _ = month_trend_window(today)
-    since = datetime.datetime.combine(window_start, datetime.time.min, tzinfo=GITCODE_TZ)
-    history = gitcode_history_items(sigs, kind, since.isoformat())
-    return render_closure_trend(build_closure_trend(open_mapping.values(), history, today), label)
-
-
 # ---------------------------------------------------------------------------
 # QA statistics
 # ---------------------------------------------------------------------------
@@ -259,19 +342,24 @@ def qa_statistics(data_dir, sigs, repos_pulls_mapping, repos_issues_mapping, com
     pr_rows = dedupe_rows(collect_pr_rows(sigs, repos_pulls_mapping, config), 3)
     issue_rows = dedupe_rows(collect_issue_rows(sigs, repos_issues_mapping, config), 2)
     log.logger.info('Found {} PRs and {} issues in the community'.format(len(pr_rows), len(issue_rows)))
-    trend_pr = trend_issue = None
+    trend_pr = trend_issue = sig_trends_pr = sig_trends_issue = None
     if qa_config.get('closure_trend'):
-        trend_pr = closure_trend_html(sigs, 'pulls', repos_pulls_mapping, 'PR')
-        trend_issue = closure_trend_html(sigs, 'issues', repos_issues_mapping, 'Issue')
+        repo_sig = repo_sig_mapping(sigs, config)
+        total_pr, sig_trends_pr = build_trends(sigs, 'pulls', repos_pulls_mapping, repo_sig)
+        total_issue, sig_trends_issue = build_trends(sigs, 'issues', repos_issues_mapping, repo_sig)
+        trend_pr = render_closure_trend(total_pr, 'PR')
+        trend_issue = render_closure_trend(total_issue, 'Issue')
 
     send_community_report(data_dir, 'qa_statistics_qa_pr', 'qa_pr', pr_rows, False,
                           qa_config.get('subject_pr'), qa_config.get('body_pr'),
                           '全社区 PR（按 SIG 分组）', qa_config, config, recipients,
-                          controls, compare_dict, trend_html=trend_pr)
+                          controls, compare_dict, trend_html=trend_pr,
+                          sig_trends=sig_trends_pr)
     send_community_report(data_dir, 'qa_statistics_qa_issue', 'qa_issue', issue_rows, True,
                           qa_config.get('subject_issue'), qa_config.get('body_issue'),
                           '全社区 Issue（按 SIG 分组）', qa_config, config, recipients,
-                          controls, compare_dict, trend_html=trend_issue)
+                          controls, compare_dict, trend_html=trend_issue,
+                          sig_trends=sig_trends_issue)
 
 
 # ---------------------------------------------------------------------------

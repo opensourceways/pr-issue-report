@@ -605,6 +605,9 @@ SIG_STATS_TIER_LABELS = ('超期', '严重超期', '长期超期')
 SIG_STATS_TIER_RANGES = ('8~30 天', '31~365 天', '>365 天')
 # SIG 标题行与统计行的淡绿色底纹（仅在开启 sig_stats 的社区使用）
 SIG_STATS_FILL = 'E2EFDA'
+# SIG 闭环趋势表的列：时间 / 待处理 / 超期 / 严重超期（严重+长期合并）/ 闭环率
+SIG_TREND_HEADERS = ('时间', '待处理', '超期', '严重超期', '闭环率')
+SIG_TREND_HEADER_FILL = 'F2F2F2'
 
 
 def summarize_sig_rows(rows, duration_index):
@@ -690,7 +693,7 @@ def csv_to_xlsx(filepath):
 
 
 def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None, extra_fills=None,
-                       sig_stats=None, sig_label='PR'):
+                       sig_stats=None, sig_label='PR', sig_trends=None):
     """
     Adjust styles of the xlsx file
     :param filepath: path of the xlsx file
@@ -702,6 +705,8 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     :param sig_stats: optional {sig_name: [total, stage1, stage2, stage3]} from
                       summarize_sig_rows(); omitted means the layout is unchanged
     :param sig_label: item type shown in the SIG summary line ('PR' or 'Issue')
+    :param sig_trends: optional {sig_name: {'window_row', 'rows'}} from the QA report; each SIG
+                       then gets a small trend table (SIG_TREND_HEADERS) under its name
     """
     if not filepath.endswith('.xlsx'):
         return
@@ -729,6 +734,8 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     alignment_center = Alignment(horizontal='center', vertical='center')
     insert_count = 0
     original_header_row = None
+    trend_header_rows = []
+    trend_data_rows = []
     for i in sorted(insert_rows.keys()):
         sig_name = insert_rows[i]
         i += insert_count
@@ -754,6 +761,31 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             ws['A' + str(next_row)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
             ws['A' + str(i)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
             next_row += 1
+
+        # SIG 闭环趋势表（QA 邮件）：表头 + 每次触发的存量数据，紧跟在 SIG 名称下方
+        trend = sig_trends.get(sig_name) if sig_trends else None
+        if trend:
+            ws.insert_rows(next_row)
+            insert_count += 1
+            for idx, header in enumerate(SIG_TREND_HEADERS):
+                cell = ws[chr(65 + idx) + str(next_row)]
+                cell.value = header
+                cell.font = Font(bold=True, size=10)
+                cell.alignment = alignment_center
+            trend_header_rows.append(next_row)
+            next_row += 1
+            for point in [trend['window_row']] + trend['rows']:
+                ws.insert_rows(next_row)
+                insert_count += 1
+                values = [point['label'], point['backlog'], point['overdue'],
+                          point['severe'], point['rate_text']]
+                for idx, value in enumerate(values):
+                    cell = ws[chr(65 + idx) + str(next_row)]
+                    cell.value = value
+                    cell.font = Font(size=10)
+                    cell.alignment = alignment_center
+                trend_data_rows.append(next_row)
+                next_row += 1
 
         # the compare row is skipped when no comparison data is available (e.g. the
         # boostkit sigs are not covered by the openEuler processed-rate API), so that
@@ -803,7 +835,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     status = ws.iter_rows(min_row=3, min_col=status_col, max_col=status_col)
     for j in status:
         value = j[0].value
-        if not value:
+        if not isinstance(value, str) or not value:
             continue
         elif len(value) <= 3 and value != '草稿':
             continue
@@ -816,6 +848,15 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             color = extra_fills.get(row[0].value)
             if color:
                 row[0].fill = PatternFill('solid', start_color=color)
+    # the trend rows use their own column semantics, so undo any colour the duration or
+    # status rules applied to them and give their header a light grey fill instead
+    for row_num in trend_data_rows:
+        for col in range(1, max_col + 1):
+            ws.cell(row=row_num, column=col).fill = PatternFill(fill_type=None)
+    for row_num in trend_header_rows:
+        for col in range(1, max_col + 1):
+            ws.cell(row=row_num, column=col).fill = PatternFill('solid',
+                                                                start_color=SIG_TREND_HEADER_FILL)
     # align center (duration column and, when present, the extra column)
     for row in ws.rows:
         for col in range(duration_col - 1, max_col):

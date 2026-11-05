@@ -752,6 +752,29 @@ class TestExcelOptimization:
         assert ws['A2'].fill.start_color.rgb == '00E2EFDA'
 
 
+    def test_sig_trend_table_inserted_under_sig_name(self, tmp_path):
+        """sig_trends adds a 5-column trend table directly under the SIG name."""
+        csv = (
+            'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR1</a>,待合入,10\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'sig_trend')
+        point = {'label': '10-26~10-31（上月末周）', 'backlog': 5, 'overdue': 2,
+                 'severe': 1, 'rate_text': '20.0%'}
+        trends = {'sig-ai': {'month_label': '11 月', 'window_row': point, 'rows': []}}
+        excel_optimization(xlsx, {}, is_issue=False, sig_trends=trends)
+
+        rows = _sheet_rows(xlsx)
+        assert rows[0][0] == 'sig-ai'
+        assert rows[1][:5] == ['时间', '待处理', '超期', '严重超期', '闭环率']
+        assert rows[2][:5] == ['10-26~10-31（上月末周）', 5, 2, 1, '20.0%']
+        assert rows[3][0] == '仓库'
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        assert ws['A2'].fill.start_color.rgb == '00F2F2F2'      # trend header
+        assert ws['E3'].fill.fill_type is None                   # rate text is not coloured
+
+
 # ---------------------------------------------------------------------------
 # send_email
 # ---------------------------------------------------------------------------
