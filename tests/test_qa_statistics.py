@@ -234,13 +234,12 @@ class TestClosureTrendWindow:
         assert month_start == datetime.date(2026, 6, 1)
 
     def test_intervals_are_natural_weeks_clipped_to_the_window(self):
-        # Nov 1 2026 is a Sunday, so it forms a single-day first interval
+        # Nov 1 2026 is a Sunday, so that one-day week is folded into the next interval
         intervals = week_intervals(datetime.date(2026, 10, 26), datetime.date(2026, 11, 1),
                                    datetime.date(2026, 11, 5))
         assert intervals == [
             (datetime.date(2026, 10, 26), datetime.date(2026, 10, 31)),
-            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 1)),
-            (datetime.date(2026, 11, 2), datetime.date(2026, 11, 5)),   # current week, partial
+            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 5)),
         ]
 
 
@@ -258,8 +257,8 @@ class TestClosureTrendNumbers:
         ]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
 
-        # Nov 1 is a Sunday (single-day week), the current week is 11-02~11-05
-        assert [r['label'] for r in trend['rows']] == ['11-01', '11-02~11-05（本周至今）']
+        # Nov 1 is a Sunday; that one-day week is merged into the current interval
+        assert [r['label'] for r in trend['rows']] == ['11-01~11-05（本周至今）']
         last = trend['rows'][-1]
         assert last['period_closed'] == 2             # u3, u5 closed in 11-02~11-05
         assert last['closed'] == 2                    # nothing closed on 11-01

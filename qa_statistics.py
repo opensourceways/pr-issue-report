@@ -63,12 +63,20 @@ def week_intervals(window_start, month_start, today):
     Natural-week intervals (Monday~Sunday) covering the whole trend, clipped to it.
     The previous month's last week is one baseline interval; the current month is cut
     into weeks starting at the 1st, so its first and last intervals may be partial.
+    A one-day interval would read like a time point, so it is merged into its neighbour.
     :return: list of (start_day, end_day)
     """
     intervals = []
     prev_month_last = month_start - datetime.timedelta(days=1)
     if window_start <= prev_month_last:
         intervals.append((window_start, prev_month_last))
+    intervals.extend(_merge_single_day(_month_week_intervals(month_start, today)))
+    return intervals
+
+
+def _month_week_intervals(month_start, today):
+    """Weeks of the current month, each clipped to [month_start, today]."""
+    intervals = []
     day = month_start
     while day <= today:
         sunday = day - datetime.timedelta(days=day.weekday()) + datetime.timedelta(days=6)
@@ -76,6 +84,20 @@ def week_intervals(window_start, month_start, today):
         intervals.append((day, end))
         day = end + datetime.timedelta(days=1)
     return intervals
+
+
+def _merge_single_day(intervals):
+    """Fold one-day intervals into their next (or, for the last, previous) neighbour."""
+    merged = []
+    for start_day, end_day in intervals:
+        if merged and merged[-1][0] == merged[-1][1]:
+            merged[-1] = (merged[-1][0], end_day)
+        else:
+            merged.append((start_day, end_day))
+    if len(merged) > 1 and merged[-1][0] == merged[-1][1]:
+        merged[-2] = (merged[-2][0], merged[-1][1])
+        merged.pop()
+    return merged
 
 
 def _parse_day(value):
@@ -144,8 +166,8 @@ def trend_points(records, today=None):
         }
 
     def label_of(start_day, end_day):
-        text = start_day.strftime('%m-%d') if start_day == end_day else \
-            '{}~{}'.format(start_day.strftime('%m-%d'), end_day.strftime('%m-%d'))
+        # always a range, so a single-day week never reads like a time point
+        text = '{}~{}'.format(start_day.strftime('%m-%d'), end_day.strftime('%m-%d'))
         if end_day < month_start:
             return '{}（上月末周）'.format(text)
         if end_day == today:

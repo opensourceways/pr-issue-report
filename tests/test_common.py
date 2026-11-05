@@ -776,6 +776,25 @@ class TestExcelOptimization:
         assert ws['G3'].fill.start_color.rgb == '00E2EFDA'      # last trend column band
 
 
+    def test_detail_rows_are_widened_to_the_trend_table(self, tmp_path):
+        """The 5-column Issue detail rows are merged up to the 7-column trend width so
+        no ragged strip of empty cells is left at the right edge."""
+        csv = (
+            'sig-ai,openeuler/ai-framework,<a href="#">#1</a>,<a href="#">Issue</a>,需求,3\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'sig_trend_issue')
+        point = {'label': '11-01~11-05（本周至今）', 'backlog': 7, 'overdue': 0,
+                 'severe': 0, 'period_closed': 2, 'closed': 2, 'rate_text': '22.2%'}
+        trends = {'sig-ai': {'month_label': '11 月', 'window_row': point, 'rows': []}}
+        excel_optimization(xlsx, {}, is_issue=True, sig_trends=trends)
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        spans = {(m.min_col, m.max_col) for m in ws.merged_cells.ranges}
+        assert (1, 7) in spans          # SIG title spans the full width
+        assert (5, 7) in spans          # detail header + data row end at the same edge
+
+
 # ---------------------------------------------------------------------------
 # send_email
 # ---------------------------------------------------------------------------

@@ -737,15 +737,21 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     original_header_row = None
     trend_header_rows = []
     trend_data_rows = []
+    inserted_rows = set()
+    # the trend table is wider than the detail table, so the sheet is as wide as the
+    # widest block; the detail rows get their last column extended to that width instead
+    # of leaving a ragged edge of empty cells
+    sheet_cols = max(max_col, len(SIG_TREND_HEADERS)) if sig_trends else max_col
     for i in sorted(insert_rows.keys()):
         sig_name = insert_rows[i]
         i += insert_count
 
         ws.insert_rows(i)
         insert_count += 1
+        inserted_rows.add(i)
         ws['A' + str(i)] = sig_name
         ws['A' + str(i)].font = Font(name='黑体', size=20, bold=True)
-        ws.merge_cells(start_row=i, end_row=i, start_column=1, end_column=max_col)
+        ws.merge_cells(start_row=i, end_row=i, start_column=1, end_column=sheet_cols)
         ws['A' + str(i)].alignment = alignment_center
 
         # SIG 统计行紧跟在 SIG 名称下方（仅 boostkit 等显式开启的社区传入 sig_stats）。
@@ -758,9 +764,10 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         if stats:
             ws.insert_rows(next_row)
             insert_count += 1
+            inserted_rows.add(next_row)
             ws['A' + str(next_row)] = format_sig_stats(stats, sig_label)
             ws['A' + str(next_row)].font = Font(name='黑体', color='595959')
-            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
+            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=sheet_cols)
             ws['A' + str(next_row)].alignment = alignment_center
             ws['A' + str(next_row)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
             next_row += 1
@@ -769,6 +776,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         if trend:
             ws.insert_rows(next_row)
             insert_count += 1
+            inserted_rows.add(next_row)
             for idx, header in enumerate(SIG_TREND_HEADERS):
                 cell = ws[chr(65 + idx) + str(next_row)]
                 cell.value = header
@@ -779,6 +787,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             for point in [trend['window_row']] + trend['rows']:
                 ws.insert_rows(next_row)
                 insert_count += 1
+                inserted_rows.add(next_row)
                 values = [point['label'], point['backlog'], point['overdue'],
                           point['severe'], point['period_closed'], point['closed'],
                           point['rate_text']]
@@ -797,14 +806,16 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         if compare_info:
             ws.insert_rows(next_row)
             insert_count += 1
+            inserted_rows.add(next_row)
             ws['A' + str(next_row)] = compare_info
             ws['A' + str(next_row)].font = Font(name='黑体', color='FF0000')
             ws['A' + str(next_row)].alignment = alignment_center
-            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
+            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=sheet_cols)
             next_row += 1
 
         ws.insert_rows(next_row)
         insert_count += 1
+        inserted_rows.add(next_row)
         for idx, header in enumerate(headers):
             cell = ws[chr(65 + idx) + str(next_row)]
             cell.value = header
@@ -822,6 +833,23 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             col = chr(65 + idx)
             ws[col + str(original_header_row + 1)] = ws[col + str(original_header_row)].value
         ws.delete_rows(original_header_row)
+    # the detail table is narrower than the trend table: extend its last column to the
+    # sheet width so the block does not end with a ragged strip of empty cells
+    if sheet_cols > max_col:
+        merged_starts = {(m.min_row, m.min_col) for m in ws.merged_cells.ranges}
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+            row_num = row[0].row
+            if (row_num, 1) in merged_starts:
+                continue                       # SIG title / stats / compare row
+            if row_num in trend_header_rows or row_num in trend_data_rows:
+                continue
+            if row[max_col - 1].value in (None, ''):
+                continue
+            if any(row[col].value not in (None, '') for col in range(max_col, sheet_cols)):
+                continue
+            ws.merge_cells(start_row=row_num, end_row=row_num,
+                           start_column=max_col, end_column=sheet_cols)
+            row[max_col - 1].alignment = alignment_center
     # fill for the Duration column（分档阈值与 SIG 统计共用 DURATION_STAGES）
     cells = ws.iter_rows(min_row=3, min_col=duration_col, max_col=duration_col)
     yellow_fill = PatternFill("solid", start_color='FFFF00')
@@ -860,7 +888,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
                                                                 start_color=SIG_STATS_FILL)
     # align center (duration column and, when present, the extra column)
     for row in ws.rows:
-        for col in range(duration_col - 1, max_col):
+        for col in range(duration_col - 1, sheet_cols):
             row[col].alignment = alignment_center
     # add borders
     border = Border(left=Side(border_style='thin', color='000000'),
