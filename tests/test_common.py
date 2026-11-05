@@ -730,8 +730,8 @@ class TestExcelOptimization:
         assert stats['sig-base'] == [1, 0, 0, 1]
 
     def test_sig_stats_row_rendered_below_sig_name(self, tmp_path):
-        """sig_stats adds one summary row between the SIG name and the table header,
-        with one cell per statistic instead of a separator-joined string."""
+        """sig_stats adds one summary row between the SIG name and the table header;
+        both rows use the light green fill."""
         csv = (
             'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR1</a>,待合入,10\n'
             'sig-ai,openeuler/ai-models,main,<a href="#">#2</a>,<a href="#">PR2</a>,待合入,40\n'
@@ -742,9 +742,14 @@ class TestExcelOptimization:
         excel_optimization(xlsx, {}, is_issue=False, sig_stats=sig_stats)
         rows = _sheet_rows(xlsx)
         assert rows[0][0] == 'sig-ai'
-        assert rows[1][:4] == ['共 3 个待处理 PR', '超期（8~30 天）1 个',
-                               '严重超期（31~365 天）1 个', '长期超期（>365 天）1 个']
+        assert rows[1][0] == ('共 3 个待处理 PR ｜ 超期（8~30 天）1 个 ｜ '
+                              '严重超期（31~365 天）1 个 ｜ 长期超期（>365 天）1 个')
         assert rows[2][0] == '仓库'
+
+        import openpyxl
+        ws = openpyxl.load_workbook(xlsx).active
+        assert ws['A1'].fill.start_color.rgb == '00E2EFDA'
+        assert ws['A2'].fill.start_color.rgb == '00E2EFDA'
 
 
 # ---------------------------------------------------------------------------
