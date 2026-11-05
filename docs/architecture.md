@@ -132,10 +132,21 @@ QA 社区汇总（`qa_statistics.py`）与资料汇总同构，区别只在：�
 | `receivers_sig` | 动态收件人 SIG（可选）：每次运行从 `community/sig/<sig>/sig-info.yaml` 读取当前成员，成员/邮箱变动无需改配置 |
 | `receiver_roles` | 动态收件人包含的角色，默认 `[maintainer]`，可加 `committer` |
 | `receivers` | 额外固定收件人（可选）：含 `@` 的条目直接当邮箱，否则当 gitcode_id 去 sig-info 邮箱映射里查；与动态成员按邮箱去重 |
+| `closure_trend` | 是否在邮件顶部追加「当月闭环趋势」（BoostKit 已开启）：上月最后一个自然周 + 当月每次触发（周三/周五）的累计新增、累计闭环、闭环率、未闭环存量 |
 | `nickname` | 邮件开头称呼 |
 | `subject_pr` / `body_pr` / `subject_issue` / `body_issue` | 两封邮件的标题与正文引导语 |
 
 QA 汇总没有过滤字段：口径固定为「全部 SIG 的待处理 PR / Issue」。
+
+### 闭环趋势（`qa_report.closure_trend`）
+
+QA 两封邮件正文最上方各有一段当月闭环趋势表（PR 邮件放 PR、Issue 邮件放 Issue），实现见 `qa_statistics.py`：
+
+- **窗口**：上月最后一个自然周（周一~周日，截止月末）作为一行基准，之后按周三/周五（`TREND_WEEKDAYS`）逐次取点，最后补当天。
+- **无状态重算**：每次运行用 `state=all&since=<窗口起点>` 重新拉取窗口内所有变更过的项，按 `created_at` / `merged_at`（PR）或 `finished_at`（Issue）现算，不落盘、不依赖上一次运行，因此触发频率不影响曲线粒度。
+- **口径**：PR 以 merged 或 closed 为闭环，Issue 以 state=closed 为闭环；闭环率 = 累计闭环 /（期初未闭环 + 累计新增），期初未闭环 = 当月开始时仍未关闭的项（含上月遗留、当月内才关闭的）。
+- **去重**：同一链接在 open 映射与历史列表中只保留一条，重开项按 open 计。
+- **渲染**：纯 HTML 表格 + CSS 横条，无新增依赖；表下注明「仅统计 GitCode API 可见仓库」，私有仓库不计入。
 
 ## 三种测试/验证模式
 

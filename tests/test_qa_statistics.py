@@ -7,7 +7,8 @@ import pytest
 import yaml
 
 from docs_statistics import resolve_recipients
-from qa_statistics import dedupe_rows, main, qa_statistics
+from qa_statistics import (build_closure_trend, dedupe_rows, main, month_trend_window,
+                           qa_statistics, render_closure_trend, trigger_days)
 
 QA_RECEIVERS = ['mengjiefamily@163.com', 'lcxzydhyy@163.com']
 
@@ -178,6 +179,125 @@ class TestQaStatistics:
         assert reports == []
         assert (tmp_path / 'test_output' / 'qa_pr_all.html').exists()
         assert (tmp_path / 'test_output' / 'qa_issue_all.html').exists()
+
+    def test_closure_trend_prepended_when_enabled(self, tmp_path, monkeypatch, sigs_sample,
+                                                   compare_dict_sample, reports):
+        pulls, issues = self._mappings()
+        monkeypatch.setattr('qa_statistics.closure_trend_html',
+                            lambda sigs, kind, mapping, label: '<h3>TREND-{}</h3>'.format(label))
+        qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample,
+                      _config(closure_trend=True))
+        pr_mail = [s for s in reports if 'PR' in s[2]][0]
+        issue_mail = [s for s in reports if 'Issue' in s[2]][0]
+        assert '<body><h3>TREND-PR</h3>' in pr_mail[3]
+        assert '<body><h3>TREND-Issue</h3>' in issue_mail[3]
+
+    def test_no_trend_without_the_config_flag(self, tmp_path, monkeypatch, sigs_sample,
+                                               compare_dict_sample, reports):
+        pulls, issues = self._mappings()
+        monkeypatch.setattr('qa_statistics.closure_trend_html',
+                            lambda *a, **kw: '<h3>TREND</h3>')
+        qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample, _config())
+        assert all('TREND' not in s[3] for s in reports)
+
+
+# ---------------------------------------------------------------------------
+# Closure trend
+# ---------------------------------------------------------------------------
+
+def _history(link, created, closed=None):
+    """Build one adapted history item like common.adapt_gitcode_history_item()."""
+    def parse(value):
+        return datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S').replace(
+            tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+    return {'link': link, 'created_at': parse(created),
+            'closed_at': parse(closed) if closed else None,
+            'state': 'closed' if closed else 'open'}
+
+
+class TestClosureTrendWindow:
+    def test_previous_month_last_natural_week(self):
+        # 2026-10-31 is a Saturday, so that week starts on Monday 10-26
+        window_start, month_start = month_trend_window(datetime.date(2026, 11, 5))
+        assert window_start == datetime.date(2026, 10, 26)
+        assert month_start == datetime.date(2026, 11, 1)
+
+    def test_month_starting_on_monday_uses_previous_month(self):
+        # 2026-06-01 is a Monday; the window must stay in May (05-25 ~ 05-31)
+        window_start, month_start = month_trend_window(datetime.date(2026, 6, 3))
+        assert window_start == datetime.date(2026, 5, 25)
+        assert month_start == datetime.date(2026, 6, 1)
+
+    def test_trigger_days_are_wednesday_and_friday(self):
+        days = trigger_days(datetime.date(2026, 11, 1), datetime.date(2026, 11, 8))
+        assert days == [datetime.date(2026, 11, 4), datetime.date(2026, 11, 6)]
+
+
+class TestClosureTrendNumbers:
+    def test_denominator_includes_the_month_start_backlog(self):
+        """Closed / (backlog at month start + created) — not closed / created."""
+        open_items = [
+            {'link': 'u1', 'created_at': '2026-09-01 10:00:00'},   # inherited backlog
+            {'link': 'u2', 'created_at': '2026-10-01 10:00:00'},   # inherited backlog
+        ]
+        history = [
+            _history('u3', '2026-11-01 09:00:00', '2026-11-02 09:00:00'),   # new + closed
+            _history('u4', '2026-11-02 09:00:00'),                          # new, open
+            _history('u5', '2026-10-20 09:00:00', '2026-11-03 09:00:00'),   # inherited, closed
+        ]
+        trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
+
+        # 11-04 is the only trigger day before 11-05 plus today itself
+        assert [r['label'] for r in trend['rows']] == ['11-04（周三）', '11-05（当天）']
+        last = trend['rows'][-1]
+        assert last['new'] == 2                       # u3, u4
+        assert last['closed'] == 2                    # u3, u5
+        # month-start backlog is 3: u1, u2 and u5 (created in October, closed in November)
+        assert last['backlog'] == 3 + 2 - 2
+        assert round(last['rate'], 4) == round(2 / 5, 4)
+
+    def test_previous_month_row_uses_its_own_base(self):
+        open_items = [{'link': 'u1', 'created_at': '2026-09-01 10:00:00'}]
+        history = [_history('u2', '2026-10-27 09:00:00', '2026-10-29 09:00:00')]
+        trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
+        row = trend['window_row']
+        assert row['label'] == '10-26~10-31（上月末周）'
+        assert row['new'] == 1 and row['closed'] == 1
+        assert round(row['rate'], 4) == 0.5           # 1 / (1 inherited + 1 new)
+
+    def test_reopened_item_counts_as_open(self):
+        open_items = [{'link': 'u1', 'created_at': '2026-10-01 10:00:00'}]
+        history = [_history('u1', '2026-10-01 10:00:00', '2026-11-02 10:00:00')]
+        trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
+        assert trend['rows'][-1]['closed'] == 0
+        assert trend['rows'][-1]['backlog'] == 1
+
+    def test_empty_period_has_no_rate(self):
+        trend = build_closure_trend([], [], today=datetime.date(2026, 11, 5))
+        assert trend['rows'][-1]['rate'] is None
+
+
+class TestClosureTrendRendering:
+    def test_table_contains_cells_and_bar(self):
+        trend = {
+            'month_label': '11 月',
+            'window_row': {'label': '10-26~10-31（上月末周）', 'new': 3, 'closed': 2,
+                           'rate': 0.5, 'backlog': 4},
+            'rows': [{'label': '11-04（周三）', 'new': 5, 'closed': 2,
+                      'rate': 0.2857, 'backlog': 6}],
+        }
+        html = render_closure_trend(trend, 'PR')
+        assert '11 月 PR 闭环趋势' in html
+        assert '10-26~10-31（上月末周）' in html
+        assert '50.0%' in html and '28.6%' in html
+        assert 'width:29%' in html            # bar width follows the rate
+
+    def test_zero_rate_shows_dash(self):
+        trend = {'month_label': '11 月',
+                 'window_row': {'label': 'x', 'new': 0, 'closed': 0, 'rate': None, 'backlog': 0},
+                 'rows': []}
+        html = render_closure_trend(trend, 'Issue')
+        assert '>-<'.replace(' ', '') in html.replace(' ', '')
 
 
 class TestDynamicReceivers:

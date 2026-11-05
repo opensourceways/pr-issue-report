@@ -1030,20 +1030,25 @@ def compare_sig_processed_rate(sig_name):
 GITCODE_API_BASE = 'https://gitcode.com/api/v5'
 
 
-def gitcode_fetch_repo_items(repo, kind, token):
+def gitcode_fetch_repo_items(repo, kind, token, state='open', since=None):
     """
-    Fetch all open items (pulls or issues) of one repo from the GitCode API, paginated.
+    Fetch items (pulls or issues) of one repo from the GitCode API, paginated.
     403/404 (private or missing repos) are logged as warnings and skipped.
     :param repo: full repo name, e.g. 'boostkit/community'
     :param kind: 'pulls' or 'issues'
     :param token: GitCode access token
+    :param state: 'open' (default), 'closed', 'merged' (pulls only) or 'all'
+    :param since: optional ISO 8601 timestamp; the API filters on updated_at, so callers
+                  that need a creation/closure window must filter again locally
     :return: list of raw API items
     """
     items = []
     page = 1
     while True:
         url = '{}/repos/{}/{}'.format(GITCODE_API_BASE, repo, kind)
-        params = {'state': 'open', 'per_page': 100, 'page': page, 'access_token': token}
+        params = {'state': state, 'per_page': 100, 'page': page, 'access_token': token}
+        if since:
+            params['since'] = since
         try:
             r = requests.get(url, params=params, timeout=30)
         except requests.exceptions.RequestException as e:
@@ -1115,3 +1120,65 @@ def gitcode_open_items(sigs, kind):
             mapping[adapted['link'].split('/', 3)[3]] = adapted
     log.logger.info('Got {} open {} via GitCode API'.format(len(mapping), kind))
     return mapping
+
+
+GITCODE_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def _iso_to_datetime(ts):
+    """Parse a GitCode ISO 8601 timestamp into an aware datetime in UTC+8."""
+    if not ts:
+        return None
+    parsed = datetime.datetime.fromisoformat(ts)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=GITCODE_TZ)
+    return parsed.astimezone(GITCODE_TZ)
+
+
+def adapt_gitcode_history_item(item, kind):
+    """
+    Adapt a GitCode API item of any state for closure-trend accounting.
+    :param item: raw API item
+    :param kind: 'pulls' or 'issues'
+    :return: {'link', 'created_at', 'closed_at', 'state'}; closed_at is None while the
+             item is still open, so a reopened item counts as open again
+    """
+    state = item.get('state') or ''
+    closed_at = None
+    if state != 'open':
+        if kind == 'pulls':
+            closed_at = (_iso_to_datetime(item.get('merged_at'))
+                         or _iso_to_datetime(item.get('closed_at')))
+        else:
+            closed_at = (_iso_to_datetime(item.get('finished_at'))
+                         or _iso_to_datetime(item.get('closed_at'))
+                         or _iso_to_datetime(item.get('updated_at')))
+    return {
+        'link': item.get('html_url', ''),
+        'created_at': _iso_to_datetime(item.get('created_at')),
+        'closed_at': closed_at,
+        'state': state,
+    }
+
+
+def gitcode_history_items(sigs, kind, since):
+    """
+    Fetch every pull/issue of the community updated since `since`, whatever its state.
+    The closure trend needs creation and closure timestamps, not just the current backlog.
+    :param sigs: sigs list from get_sigs()
+    :param kind: 'pulls' or 'issues'
+    :param since: ISO 8601 string, e.g. '2026-10-26T00:00:00+08:00'
+    :return: list of adapted items (see adapt_gitcode_history_item)
+    """
+    token = os.getenv('GITCODE_TOKEN', '').strip()
+    if not token:
+        log.logger.error('ERROR! GITCODE_TOKEN is required for the closure trend, exit...')
+        sys.exit(1)
+    repos = sorted({repo for sig in sigs for repo in sig['repositories']})
+    log.logger.info('Fetching {} updated since {} for {} repos'.format(kind, since, len(repos)))
+    items = []
+    for repo in repos:
+        for raw in gitcode_fetch_repo_items(repo, kind, token, state='all', since=since):
+            items.append(adapt_gitcode_history_item(raw, kind))
+    log.logger.info('Got {} {} updated since {}'.format(len(items), kind, since))
+    return items
