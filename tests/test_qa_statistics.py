@@ -9,7 +9,8 @@ import yaml
 from docs_statistics import resolve_recipients
 from qa_statistics import (build_closure_trend, build_sig_trends, dedupe_rows, main,
                            month_trend_window, qa_statistics, render_closure_trend,
-                           repo_of_link, repo_sig_mapping, week_intervals)
+                           render_sig_trends, repo_of_link, repo_sig_mapping,
+                           trend_intervals)
 
 QA_RECEIVERS = ['mengjiefamily@163.com', 'lcxzydhyy@163.com']
 
@@ -99,7 +100,7 @@ class TestQaStatistics:
         monkeypatch.setattr('docs_statistics.csv_to_xlsx', lambda c: c.replace('.csv', '.xlsx'))
 
         def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None,
-                       sig_trends=None):
+                       highlight_sig_title=False):
             self.render_calls.append({'is_issue': is_issue, 'extra_header': extra_header,
                                       'extra_fills': extra_fills})
             with open(xlsx_path.replace('.xlsx', '.html'), 'w', encoding='utf-8') as f:
@@ -185,14 +186,17 @@ class TestQaStatistics:
     def test_closure_trend_prepended_when_enabled(self, tmp_path, monkeypatch, sigs_sample,
                                                    compare_dict_sample, reports):
         pulls, issues = self._mappings()
-        monkeypatch.setattr('qa_statistics.build_trends', lambda *a, **kw: ({}, {'QA': {}}))
+        monkeypatch.setattr('qa_statistics.build_trends', lambda *a, **kw: ({}, {}))
         monkeypatch.setattr('qa_statistics.render_closure_trend',
                             lambda trend, label: '<h3>TREND-{}</h3>'.format(label))
+        monkeypatch.setattr('qa_statistics.render_sig_trends',
+                            lambda trends, label: '<h3>SIGTREND-{}</h3>'.format(label))
         qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample,
                       _config(closure_trend=True))
         pr_mail = [s for s in reports if 'PR' in s[2]][0]
         issue_mail = [s for s in reports if 'Issue' in s[2]][0]
         assert '<body><h3>TREND-PR</h3>' in pr_mail[3]
+        assert 'SIGTREND-PR' in pr_mail[3]
         assert '<body><h3>TREND-Issue</h3>' in issue_mail[3]
 
     def test_no_trend_without_the_config_flag(self, tmp_path, monkeypatch, sigs_sample,
@@ -221,25 +225,29 @@ def _history(link, created, closed=None):
 
 
 class TestClosureTrendWindow:
-    def test_previous_month_last_natural_week(self):
-        # 2026-10-31 is a Saturday, so that week starts on Monday 10-26
+    def test_baseline_is_the_previous_month_last_seven_days(self):
         window_start, month_start = month_trend_window(datetime.date(2026, 11, 5))
-        assert window_start == datetime.date(2026, 10, 26)
+        assert window_start == datetime.date(2026, 10, 25)
         assert month_start == datetime.date(2026, 11, 1)
 
-    def test_month_starting_on_monday_uses_previous_month(self):
-        # 2026-06-01 is a Monday; the window must stay in May (05-25 ~ 05-31)
-        window_start, month_start = month_trend_window(datetime.date(2026, 6, 3))
-        assert window_start == datetime.date(2026, 5, 25)
-        assert month_start == datetime.date(2026, 6, 1)
-
-    def test_intervals_are_natural_weeks_clipped_to_the_window(self):
-        # Nov 1 2026 is a Sunday, so that one-day week is folded into the next interval
-        intervals = week_intervals(datetime.date(2026, 10, 26), datetime.date(2026, 11, 1),
-                                   datetime.date(2026, 11, 5))
+    def test_windows_are_seven_days_anchored_at_the_first(self):
+        intervals = trend_intervals(datetime.date(2026, 10, 25), datetime.date(2026, 11, 1),
+                                    datetime.date(2026, 11, 5))
         assert intervals == [
-            (datetime.date(2026, 10, 26), datetime.date(2026, 10, 31)),
-            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 5)),
+            (datetime.date(2026, 10, 25), datetime.date(2026, 10, 31)),
+            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 5)),   # last window, clipped
+        ]
+
+    def test_windows_never_straddle_the_month_boundary(self):
+        # a full month always yields five windows, the last one being two days
+        intervals = trend_intervals(datetime.date(2026, 10, 25), datetime.date(2026, 11, 1),
+                                    datetime.date(2026, 11, 30))
+        assert intervals[1:] == [
+            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 7)),
+            (datetime.date(2026, 11, 8), datetime.date(2026, 11, 14)),
+            (datetime.date(2026, 11, 15), datetime.date(2026, 11, 21)),
+            (datetime.date(2026, 11, 22), datetime.date(2026, 11, 28)),
+            (datetime.date(2026, 11, 29), datetime.date(2026, 11, 30)),
         ]
 
 
@@ -257,8 +265,8 @@ class TestClosureTrendNumbers:
         ]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
 
-        # Nov 1 is a Sunday; that one-day week is merged into the current interval
-        assert [r['label'] for r in trend['rows']] == ['11-01~11-05（本周至今）']
+        # one window for the whole month-to-date, labelled as the current window
+        assert [r['label'] for r in trend['rows']] == ['11-01~11-05（截至今日）']
         last = trend['rows'][-1]
         assert last['period_closed'] == 2             # u3, u5 closed in 11-02~11-05
         assert last['closed'] == 2                    # nothing closed on 11-01
@@ -271,7 +279,7 @@ class TestClosureTrendNumbers:
         history = [_history('u2', '2026-10-27 09:00:00', '2026-10-29 09:00:00')]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
         row = trend['window_row']
-        assert row['label'] == '10-26~10-31（上月末周）'
+        assert row['label'] == '10-25~10-31（上月最后 7 天）'
         assert row['period_closed'] == 1 and row['closed'] == 1
         assert row['backlog'] == 1
         assert round(row['rate'], 4) == 0.5           # 1 / (1 closed + 1 still open)
@@ -341,10 +349,10 @@ class TestClosureTrendRendering:
     def test_table_uses_the_same_columns_as_the_sig_tables(self):
         trend = {
             'month_label': '11 月',
-            'window_row': {'label': '10-26~10-31（上月末周）', 'backlog': 4, 'overdue': 2,
+            'window_row': {'label': '10-25~10-31（上月最后 7 天）', 'backlog': 4, 'overdue': 2,
                            'severe': 1, 'period_closed': 4, 'closed': 4, 'rate': 0.5,
                            'rate_text': '50.0%'},
-            'rows': [{'label': '11-02~11-05（本周至今）', 'backlog': 6, 'overdue': 3,
+            'rows': [{'label': '11-01~11-05（截至今日）', 'backlog': 6, 'overdue': 3,
                       'severe': 1, 'period_closed': 2, 'closed': 6, 'rate': 0.5,
                       'rate_text': '50.0%'}],
         }
@@ -364,6 +372,23 @@ class TestClosureTrendRendering:
                  'rows': []}
         html = render_closure_trend(trend, 'Issue')
         assert '>-<' in html
+
+    def test_sig_trends_share_one_header_and_are_sorted(self):
+        point = {'label': '11-01~11-05（截至今日）', 'backlog': 3, 'overdue': 1,
+                 'severe': 0, 'period_closed': 1, 'closed': 1, 'rate': 0.25,
+                 'rate_text': '25.0%'}
+        sig_trends = {
+            'BoostVirt': {'month_label': '11 月', 'window_row': point, 'rows': []},
+            'BoostCore': {'month_label': '11 月', 'window_row': point, 'rows': []},
+        }
+        html = render_sig_trends(sig_trends, 'PR')
+        assert '各 SIG PR 闭环趋势' in html
+        assert html.count('统计区间') == 1                 # one shared header
+        assert html.index('BoostCore') < html.index('BoostVirt')
+        assert 'colspan="7"' in html
+
+    def test_sig_trends_empty_renders_nothing(self):
+        assert render_sig_trends({}, 'PR') == ''
 
 
 class TestDynamicReceivers:

@@ -280,7 +280,7 @@ def resolve_recipients(config, report_key='docs_report'):
 
 def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject, body_text,
                           title, report_config, config, recipients, controls, compare_dict,
-                          extra_header=None, extra_fills=None, trend_html=None, sig_trends=None):
+                          extra_header=None, extra_fills=None, trend_html=None):
     """
     Render one community wide report and send it to the resolved receivers.
     Used by both the docs report (docs_statistics.py) and the QA report (qa_statistics.py).
@@ -301,10 +301,8 @@ def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject
     :param extra_fills: optional {cell value: fill color} for that extra column
     :param trend_html: optional HTML section prepended to the body (the QA closure trend);
                        send_email() inserts the greeting before it, so receivers still see
-                       the greeting first
-    :param sig_trends: optional per-SIG trend tables inserted under every SIG name; when
-                       given, the one-line SIG summary is skipped because the trend table's
-                       last row already carries the current numbers
+                       the greeting first. When given, the one-line SIG summary is skipped
+                       because the trend section already carries the current numbers
     """
     if not rows:
         log.logger.info('No rows for {}, skip {} email'.format(mail_type, mail_type))
@@ -318,14 +316,15 @@ def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject
     with codecs.open(csv_path, 'w', encoding='utf-8') as f:
         csv.writer(f).writerows(sort_rows_by_sig_duration(rows, 5 if is_issue else 6))
     xlsx_path = csv_to_xlsx(csv_path)
-    # SIG 统计按本报表的行（社区汇总为全量，资料汇总为资料口径）计算；趋势表已包含
+    # SIG 统计按本报表的行（社区汇总为全量，资料汇总为资料口径）计算；趋势区已包含
     # 当日快照，两者同时出现会重复，因此有趋势时不再渲染单行汇总
     sig_stats = None
-    if config.get('sig_header_stats') and not sig_trends:
+    if config.get('sig_header_stats') and not trend_html:
         sig_stats = summarize_sig_rows(rows, 5 if is_issue else 6)
     stats_kwargs = {'sig_stats': sig_stats, 'sig_label': 'Issue' if is_issue else 'PR'} if sig_stats else {}
     excel_optimization(xlsx_path, compare_dict, is_issue=is_issue, extra_header=extra_header,
-                       extra_fills=extra_fills, sig_trends=sig_trends, **stats_kwargs)
+                       extra_fills=extra_fills,
+                       highlight_sig_title=bool(config.get('sig_header_stats')), **stats_kwargs)
     merged_html = merge_html_parts([(title, xlsx_path.replace('.xlsx', '.html'))], mail_type)
     if trend_html:
         merged_html = merged_html.replace('<body>', '<body>' + trend_html, 1)

@@ -752,49 +752,6 @@ class TestExcelOptimization:
         assert ws['A2'].fill.start_color.rgb == '00E2EFDA'
 
 
-    def test_sig_trend_table_inserted_under_sig_name(self, tmp_path):
-        """sig_trends adds a 5-column trend table directly under the SIG name."""
-        csv = (
-            'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR1</a>,待合入,10\n'
-        )
-        xlsx = self._make_xlsx(tmp_path, csv, 'sig_trend')
-        point = {'label': '10-26~10-31（上月末周）', 'backlog': 5, 'overdue': 2,
-                 'severe': 1, 'period_closed': 3, 'closed': 3, 'rate_text': '37.5%'}
-        trends = {'sig-ai': {'month_label': '11 月', 'window_row': point, 'rows': []}}
-        excel_optimization(xlsx, {}, is_issue=False, sig_trends=trends)
-
-        rows = _sheet_rows(xlsx)
-        assert rows[0][0] == 'sig-ai'
-        assert rows[1][:7] == ['统计区间', '待处理', '超期', '严重超期', '期间闭环', '累计闭环', '闭环率']
-        assert rows[2][:7] == ['10-26~10-31（上月末周）', 5, 2, 1, 3, 3, '37.5%']
-        assert rows[3][0] == '仓库'
-
-        import openpyxl
-        ws = openpyxl.load_workbook(xlsx).active
-        assert ws['A1'].fill.start_color.rgb == '00E2EFDA'      # SIG title band
-        assert ws['A2'].fill.start_color.rgb == '00E2EFDA'      # trend header band
-        assert ws['G3'].fill.start_color.rgb == '00E2EFDA'      # last trend column band
-
-
-    def test_detail_rows_are_widened_to_the_trend_table(self, tmp_path):
-        """The 5-column Issue detail rows are merged up to the 7-column trend width so
-        no ragged strip of empty cells is left at the right edge."""
-        csv = (
-            'sig-ai,openeuler/ai-framework,<a href="#">#1</a>,<a href="#">Issue</a>,需求,3\n'
-        )
-        xlsx = self._make_xlsx(tmp_path, csv, 'sig_trend_issue')
-        point = {'label': '11-01~11-05（本周至今）', 'backlog': 7, 'overdue': 0,
-                 'severe': 0, 'period_closed': 2, 'closed': 2, 'rate_text': '22.2%'}
-        trends = {'sig-ai': {'month_label': '11 月', 'window_row': point, 'rows': []}}
-        excel_optimization(xlsx, {}, is_issue=True, sig_trends=trends)
-
-        import openpyxl
-        ws = openpyxl.load_workbook(xlsx).active
-        spans = {(m.min_col, m.max_col) for m in ws.merged_cells.ranges}
-        assert (1, 7) in spans          # SIG title spans the full width
-        assert (5, 7) in spans          # detail header + data row end at the same edge
-
-
 # ---------------------------------------------------------------------------
 # send_email
 # ---------------------------------------------------------------------------

@@ -19,6 +19,11 @@ from docs_statistics import (collect_issue_rows, collect_pr_rows, resolve_recipi
 from issue_statistics import get_repos_issues_mapping
 from pr_statistics import get_repos_pulls_mapping
 
+# 闭环趋势表的列：统计区间 / 待处理（未闭环存量）/ 超期 / 严重超期（严重+长期合并）/
+# 期间闭环（本区间内闭环的数量）/ 累计闭环 / 闭环率。
+# 闭环率 = 累计闭环 /（累计闭环 + 待处理），因此这两列都必须给出
+TREND_HEADERS = ('统计区间', '待处理', '超期', '严重超期', '期间闭环', '累计闭环', '闭环率')
+
 
 def dedupe_rows(rows, link_col):
     """
@@ -47,57 +52,30 @@ def dedupe_rows(rows, link_col):
 def month_trend_window(today):
     """
     Return (window_start, month_start) of the closure trend.
-    window_start is the Monday of the previous month's last natural week, clipped to
-    that month: with today = 2026-11-05 it is 2026-10-26, because 2026-10-31 is a
-    Saturday and its week starts on Monday 10-26.
+    Rows are fixed seven-day windows anchored at the 1st, so the baseline covers the
+    previous month's last seven days: with today = 2026-11-05 it starts on 2026-10-25.
     :param today: date of the run
     :return: (window_start, month_start) as dates
     """
     month_start = today.replace(day=1)
     prev_month_last = month_start - datetime.timedelta(days=1)
-    return prev_month_last - datetime.timedelta(days=prev_month_last.weekday()), month_start
+    return prev_month_last - datetime.timedelta(days=6), month_start
 
 
-def week_intervals(window_start, month_start, today):
+def trend_intervals(window_start, month_start, today):
     """
-    Natural-week intervals (Monday~Sunday) covering the whole trend, clipped to it.
-    The previous month's last week is one baseline interval; the current month is cut
-    into weeks starting at the 1st, so its first and last intervals may be partial.
-    A one-day interval would read like a time point, so it is merged into its neighbour.
+    Fixed seven-day windows: the previous month's last seven days as one baseline row,
+    then the current month cut from the 1st (the last row is clipped at today).
+    Windows never straddle the month boundary, so a cross-month week is never split.
     :return: list of (start_day, end_day)
     """
-    intervals = []
-    prev_month_last = month_start - datetime.timedelta(days=1)
-    if window_start <= prev_month_last:
-        intervals.append((window_start, prev_month_last))
-    intervals.extend(_merge_single_day(_month_week_intervals(month_start, today)))
-    return intervals
-
-
-def _month_week_intervals(month_start, today):
-    """Weeks of the current month, each clipped to [month_start, today]."""
-    intervals = []
+    intervals = [(window_start, month_start - datetime.timedelta(days=1))]
     day = month_start
     while day <= today:
-        sunday = day - datetime.timedelta(days=day.weekday()) + datetime.timedelta(days=6)
-        end = min(sunday, today)
+        end = min(day + datetime.timedelta(days=6), today)
         intervals.append((day, end))
         day = end + datetime.timedelta(days=1)
     return intervals
-
-
-def _merge_single_day(intervals):
-    """Fold one-day intervals into their next (or, for the last, previous) neighbour."""
-    merged = []
-    for start_day, end_day in intervals:
-        if merged and merged[-1][0] == merged[-1][1]:
-            merged[-1] = (merged[-1][0], end_day)
-        else:
-            merged.append((start_day, end_day))
-    if len(merged) > 1 and merged[-1][0] == merged[-1][1]:
-        merged[-2] = (merged[-2][0], merged[-1][1])
-        merged.pop()
-    return merged
 
 
 def _parse_day(value):
@@ -166,12 +144,12 @@ def trend_points(records, today=None):
         }
 
     def label_of(start_day, end_day):
-        # always a range, so a single-day week never reads like a time point
+        # always a range, so a short window never reads like a time point
         text = '{}~{}'.format(start_day.strftime('%m-%d'), end_day.strftime('%m-%d'))
         if end_day < month_start:
-            return '{}（上月末周）'.format(text)
+            return '{}（上月最后 7 天）'.format(text)
         if end_day == today:
-            return '{}（本周至今）'.format(text)
+            return '{}（截至今日）'.format(text)
         return text
 
     def summarize(start_day, end_day, closed_before):
@@ -195,7 +173,7 @@ def trend_points(records, today=None):
 
     rows = []
     cumulative = 0
-    for start_day, end_day in week_intervals(window_start, month_start, today):
+    for start_day, end_day in trend_intervals(window_start, month_start, today):
         if start_day < month_start:
             continue                     # the baseline row already covers it
         point = summarize(start_day, end_day, cumulative)
@@ -293,10 +271,32 @@ def build_trends(sigs, kind, open_mapping, repo_sig, today=None):
             build_sig_trends(open_items, history, repo_sig, today))
 
 
+def _trend_row_html(row, cell_style, name_style):
+    """One table row of the trend table, with a bar next to the closure rate."""
+    if row['rate'] is None:
+        bar = ''
+    else:
+        width = max(0, min(100, round(row['rate'] * 100)))
+        bar = ('<div style="background:#eeeeee;width:70px;height:9px;display:inline-block;'
+               'vertical-align:middle;margin-left:6px">'
+               '<div style="background:#70AD47;height:9px;width:{}%"></div></div>').format(width)
+    return ('<tr><td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
+            '<td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
+            '<td style="{}">{}{}</td></tr>'.format(
+                name_style, row['label'], cell_style, row['backlog'], cell_style,
+                row['overdue'], cell_style, row['severe'], cell_style,
+                row['period_closed'], cell_style, row['closed'], cell_style,
+                row['rate_text'], bar))
+
+
+def _trend_head_html(head_style):
+    return '<tr>{}</tr>'.format(
+        ''.join('<th style="{}">{}</th>'.format(head_style, h) for h in TREND_HEADERS))
+
+
 def render_closure_trend(trend, label):
     """
-    Render the community wide closure trend as an HTML fragment, using the same columns
-    and rows as the per-SIG tables in the report body.
+    Render the community wide closure trend as an HTML fragment.
     :param trend: result of build_closure_trend()
     :param label: 'PR' or 'Issue'
     :return: HTML string to prepend to the mail body
@@ -309,32 +309,54 @@ def render_closure_trend(trend, label):
         label, trend['month_label'])]
     parts.append('<table cellspacing="0" cellpadding="0" '
                  'style="border-collapse:collapse;font-size:13px">')
-    parts.append('<tr>{}</tr>'.format(
-        ''.join('<th style="{}">{}</th>'.format(head_style, h) for h in SIG_TREND_HEADERS)))
+    parts.append(_trend_head_html(head_style))
     for row in [trend['window_row']] + trend['rows']:
-        if row['rate'] is None:
-            bar = ''
-        else:
-            width = max(0, min(100, round(row['rate'] * 100)))
-            bar = ('<div style="background:#eeeeee;width:70px;height:9px;display:inline-block;'
-                   'vertical-align:middle;margin-left:6px">'
-                   '<div style="background:#70AD47;height:9px;width:{}%"></div></div>').format(width)
-        parts.append('<tr><td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
-                     '<td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
-                     '<td style="{}">{}{}</td></tr>'
-                     .format(name_style, row['label'], cell_style, row['backlog'], cell_style,
-                             row['overdue'], cell_style, row['severe'], cell_style,
-                             row['period_closed'], cell_style, row['closed'], cell_style,
-                             row['rate_text'], bar))
+        parts.append(_trend_row_html(row, cell_style, name_style))
     parts.append('</table>')
-    parts.append('<p style="font-size:12px;color:#666;margin:6px 0 0">'
-                 '每行是一个自然周（周一~周日）；待处理为该区间末的未闭环存量，'
-                 '期间闭环为本区间内闭环的数量；累计闭环与闭环率按自然月累计、月初重置'
-                 '（上月末周一行只统计该周）；'
-                 '闭环率 = 累计闭环 /（累计闭环 + 待处理）；'
-                 '超期指开启天数 &gt; 7 天，严重超期指 &gt; 30 天；'
-                 '仅统计 GitCode API 可见仓库，私有仓库不在其中。</p>')
+    parts.append(_trend_footnote())
     return ''.join(parts)
+
+
+def render_sig_trends(sig_trends, label):
+    """
+    Render every SIG's closure trend as one HTML table with a shared header, so the
+    column widths stay uniform instead of inheriting the detail table's.
+    :param sig_trends: result of build_sig_trends(); empty means nothing to render
+    :param label: 'PR' or 'Issue'
+    :return: HTML string (empty when there is no per-SIG data)
+    """
+    if not sig_trends:
+        return ''
+    border = 'border:1px solid #d0d0d0;'
+    head_style = border + 'padding:6px 8px;background:#E2EFDA;font-weight:bold;text-align:center;'
+    cell_style = border + 'padding:6px 8px;text-align:center;'
+    name_style = border + 'padding:6px 8px;text-align:left;'
+    sig_style = (border + 'padding:8px;background:#E2EFDA;font-weight:bold;'
+                 'text-align:center;font-size:14px;')
+    parts = ['<h3 style="margin:18px 0 8px">各 SIG {} 闭环趋势</h3>'.format(label)]
+    parts.append('<table cellspacing="0" cellpadding="0" '
+                 'style="border-collapse:collapse;font-size:13px">')
+    parts.append(_trend_head_html(head_style))
+    for sig_name in sorted(sig_trends):
+        trend = sig_trends[sig_name]
+        parts.append('<tr><td colspan="{}" style="{}">{}</td></tr>'.format(
+            len(TREND_HEADERS), sig_style, sig_name))
+        for row in [trend['window_row']] + trend['rows']:
+            parts.append(_trend_row_html(row, cell_style, name_style))
+    parts.append('</table>')
+    parts.append(_trend_footnote())
+    return ''.join(parts)
+
+
+def _trend_footnote():
+    return ('<p style="font-size:12px;color:#666;margin:6px 0 0">'
+            '每行是固定 7 天窗口，从月初 1 日起算，最后一行截至今日；'
+            '上月基准行为上月最后 7 天。'
+            '待处理为该区间末的未闭环存量，期间闭环为本区间内闭环的数量；'
+            '累计闭环与闭环率按自然月累计、月初重置（上月基准行只统计该区间）；'
+            '闭环率 = 累计闭环 /（累计闭环 + 待处理）；'
+            '超期指开启天数 &gt; 7 天，严重超期指 &gt; 30 天；'
+            '仅统计 GitCode API 可见仓库，私有仓库不在其中。</p>')
 
 
 # ---------------------------------------------------------------------------
@@ -370,24 +392,23 @@ def qa_statistics(data_dir, sigs, repos_pulls_mapping, repos_issues_mapping, com
     pr_rows = dedupe_rows(collect_pr_rows(sigs, repos_pulls_mapping, config), 3)
     issue_rows = dedupe_rows(collect_issue_rows(sigs, repos_issues_mapping, config), 2)
     log.logger.info('Found {} PRs and {} issues in the community'.format(len(pr_rows), len(issue_rows)))
-    trend_pr = trend_issue = sig_trends_pr = sig_trends_issue = None
+    trend_pr = trend_issue = None
     if qa_config.get('closure_trend'):
         repo_sig = repo_sig_mapping(sigs, config)
         total_pr, sig_trends_pr = build_trends(sigs, 'pulls', repos_pulls_mapping, repo_sig)
         total_issue, sig_trends_issue = build_trends(sigs, 'issues', repos_issues_mapping, repo_sig)
-        trend_pr = render_closure_trend(total_pr, 'PR')
-        trend_issue = render_closure_trend(total_issue, 'Issue')
+        trend_pr = render_closure_trend(total_pr, 'PR') + render_sig_trends(sig_trends_pr, 'PR')
+        trend_issue = render_closure_trend(total_issue, 'Issue') + \
+            render_sig_trends(sig_trends_issue, 'Issue')
 
     send_community_report(data_dir, 'qa_statistics_qa_pr', 'qa_pr', pr_rows, False,
                           qa_config.get('subject_pr'), qa_config.get('body_pr'),
                           '全社区 PR（按 SIG 分组）', qa_config, config, recipients,
-                          controls, compare_dict, trend_html=trend_pr,
-                          sig_trends=sig_trends_pr)
+                          controls, compare_dict, trend_html=trend_pr)
     send_community_report(data_dir, 'qa_statistics_qa_issue', 'qa_issue', issue_rows, True,
                           qa_config.get('subject_issue'), qa_config.get('body_issue'),
                           '全社区 Issue（按 SIG 分组）', qa_config, config, recipients,
-                          controls, compare_dict, trend_html=trend_issue,
-                          sig_trends=sig_trends_issue)
+                          controls, compare_dict, trend_html=trend_issue)
 
 
 # ---------------------------------------------------------------------------
