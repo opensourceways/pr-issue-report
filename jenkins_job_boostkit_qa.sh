@@ -51,7 +51,11 @@ fi
 # Reply-To for unsubscribe emails
 export email_reply_to="${email_reply_to:-huanglei227@h-partners.com}"
 
-# Run the QA statistics (one run sends two emails: community wide PR report + Issue report)
+# Run the QA statistics (one run sends two emails: community wide PR report + Issue report).
+# Wednesday builds carry the closure trend (two Wednesday-to-Wednesday weeks); Friday builds
+# send the plain PR/Issue reminder without any statistics. The weekday is detected in the
+# script (UTC+8); tick the QA_CLOSURE_TREND boolean build parameter to force the trend on a
+# manual run (for a preview outside Wednesday). Leave it unchecked for scheduled builds.
 python3 qa_statistics.py
 
 # Archive test output when DRY_RUN is enabled

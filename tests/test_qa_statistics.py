@@ -7,10 +7,10 @@ import pytest
 import yaml
 
 from docs_statistics import resolve_recipients
-from qa_statistics import (build_closure_trend, build_sig_trends, dedupe_rows, main,
-                           month_trend_window, qa_statistics, render_closure_trend,
-                           render_sig_trends, repo_of_link, repo_sig_mapping,
-                           trend_intervals)
+from qa_statistics import (build_closure_trend, build_sig_trends, closure_trend_enabled,
+                           dedupe_rows, last_wednesday, main, qa_statistics,
+                           render_closure_trend, render_sig_trends, repo_of_link,
+                           repo_sig_mapping, trend_windows)
 
 QA_RECEIVERS = ['mengjiefamily@163.com', 'lcxzydhyy@163.com']
 
@@ -100,9 +100,10 @@ class TestQaStatistics:
         monkeypatch.setattr('docs_statistics.csv_to_xlsx', lambda c: c.replace('.csv', '.xlsx'))
 
         def fake_excel(xlsx_path, compare_dict, is_issue=True, extra_header=None, extra_fills=None,
-                       highlight_sig_title=False):
+                       highlight_sig_title=False, **kwargs):
             self.render_calls.append({'is_issue': is_issue, 'extra_header': extra_header,
-                                      'extra_fills': extra_fills})
+                                      'extra_fills': extra_fills,
+                                      'sig_stats': kwargs.get('sig_stats')})
             with open(xlsx_path.replace('.xlsx', '.html'), 'w', encoding='utf-8') as f:
                 f.write('<html><body><table>{}</table></body></html>'.format(
                     'Issue Report' if is_issue else 'PR Report'))
@@ -186,6 +187,7 @@ class TestQaStatistics:
     def test_closure_trend_prepended_when_enabled(self, tmp_path, monkeypatch, sigs_sample,
                                                    compare_dict_sample, reports):
         pulls, issues = self._mappings()
+        monkeypatch.setenv('QA_CLOSURE_TREND', 'true')     # independent of the weekday
         monkeypatch.setattr('qa_statistics.build_trends', lambda *a, **kw: ({}, {}))
         monkeypatch.setattr('qa_statistics.render_closure_trend',
                             lambda trend, label: '<h3>TREND-{}</h3>'.format(label))
@@ -209,6 +211,18 @@ class TestQaStatistics:
         qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample, _config())
         assert all('TREND' not in s[3] for s in reports)
 
+    def test_plain_reminder_has_neither_trend_nor_sig_stats(self, tmp_path, monkeypatch,
+                                                            sigs_sample, compare_dict_sample,
+                                                            reports):
+        """The Friday run must stay a plain PR/Issue reminder."""
+        pulls, issues = self._mappings()
+        monkeypatch.setattr('qa_statistics.closure_trend_enabled', lambda cfg: False)
+        config = _config(closure_trend=True)
+        config['sig_header_stats'] = True
+        qa_statistics(str(tmp_path), sigs_sample, pulls, issues, compare_dict_sample, config)
+        assert all('闭环趋势' not in (s[3] or '') for s in reports)
+        assert all(c['sig_stats'] is None for c in self.render_calls)
+
 
 # ---------------------------------------------------------------------------
 # Closure trend
@@ -225,35 +239,43 @@ def _history(link, created, closed=None):
 
 
 class TestClosureTrendWindow:
-    def test_baseline_is_the_previous_month_last_seven_days(self):
-        window_start, month_start = month_trend_window(datetime.date(2026, 11, 5))
-        assert window_start == datetime.date(2026, 10, 25)
-        assert month_start == datetime.date(2026, 11, 1)
+    def test_anchor_is_the_last_wednesday(self):
+        # 2026-11-05 is a Thursday, so the anchor is the 4th
+        assert last_wednesday(datetime.date(2026, 11, 5)) == datetime.date(2026, 11, 4)
+        assert last_wednesday(datetime.date(2026, 11, 4)) == datetime.date(2026, 11, 4)
 
-    def test_windows_are_seven_days_anchored_at_the_first(self):
-        intervals = trend_intervals(datetime.date(2026, 10, 25), datetime.date(2026, 11, 1),
-                                    datetime.date(2026, 11, 5))
-        assert intervals == [
-            (datetime.date(2026, 10, 25), datetime.date(2026, 10, 31)),
-            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 5)),   # last window, clipped
+    def test_windows_are_the_two_weeks_between_wednesdays(self):
+        assert trend_windows(datetime.date(2026, 11, 4)) == [
+            (datetime.date(2026, 10, 21), datetime.date(2026, 10, 28)),   # end exclusive
+            (datetime.date(2026, 10, 28), datetime.date(2026, 11, 5)),
         ]
 
-    def test_windows_never_straddle_the_month_boundary(self):
-        # a full month always yields five windows, the last one being two days
-        intervals = trend_intervals(datetime.date(2026, 10, 25), datetime.date(2026, 11, 1),
-                                    datetime.date(2026, 11, 30))
-        assert intervals[1:] == [
-            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 7)),
-            (datetime.date(2026, 11, 8), datetime.date(2026, 11, 14)),
-            (datetime.date(2026, 11, 15), datetime.date(2026, 11, 21)),
-            (datetime.date(2026, 11, 22), datetime.date(2026, 11, 28)),
-            (datetime.date(2026, 11, 29), datetime.date(2026, 11, 30)),
-        ]
+
+class TestClosureTrendSchedule:
+    def test_only_the_wednesday_run_has_the_trend(self):
+        assert closure_trend_enabled({'closure_trend': True},
+                                     now=datetime.datetime(2026, 11, 4, 8, 0)) is True
+        assert closure_trend_enabled({'closure_trend': True},
+                                     now=datetime.datetime(2026, 11, 6, 8, 0)) is False
+
+    def test_env_switch_forces_a_preview_on_any_day(self, monkeypatch):
+        friday = datetime.datetime(2026, 11, 6, 8, 0)
+        monkeypatch.setenv('QA_CLOSURE_TREND', 'true')
+        assert closure_trend_enabled({'closure_trend': True}, now=friday) is True
+        # an unset/false switch keeps the weekday rule (this is what a Jenkins
+        # boolean parameter with the box unchecked must behave like)
+        monkeypatch.setenv('QA_CLOSURE_TREND', 'false')
+        assert closure_trend_enabled({'closure_trend': True}, now=friday) is False
+        assert closure_trend_enabled(
+            {'closure_trend': True}, now=datetime.datetime(2026, 11, 4, 8, 0)) is True
+
+    def test_disabled_config_wins(self):
+        assert closure_trend_enabled({}, now=datetime.datetime(2026, 11, 4, 8, 0)) is False
 
 
 class TestClosureTrendNumbers:
-    def test_denominator_includes_the_month_start_backlog(self):
-        """Closed / (backlog at month start + created) — not closed / created."""
+    def test_denominator_is_the_window_backlog_plus_its_closures(self):
+        """Closed in window / (closed in window + still open at its end)."""
         open_items = [
             {'link': 'u1', 'created_at': '2026-09-01 10:00:00'},   # inherited backlog
             {'link': 'u2', 'created_at': '2026-10-01 10:00:00'},   # inherited backlog
@@ -265,30 +287,29 @@ class TestClosureTrendNumbers:
         ]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
 
-        # one window for the whole month-to-date, labelled as the current window
-        assert [r['label'] for r in trend['rows']] == ['11-01~11-05（截至今日）']
+        assert [r['label'] for r in trend['rows']] == [
+            '10-21~10-27（上周）', '10-28~11-04（本周）']
         last = trend['rows'][-1]
-        assert last['period_closed'] == 2             # u3, u5 closed in 11-02~11-05
-        assert last['closed'] == 2                    # nothing closed on 11-01
-        # month-start backlog is 3: u1, u2 and u5 (created in October, closed in November)
-        assert last['backlog'] == 3 + 2 - 2
+        assert last['period_closed'] == 2             # u3, u5 closed inside the window
+        assert last['backlog'] == 3                   # u1, u2, u4 still open on 11-04
         assert round(last['rate'], 4) == round(2 / 5, 4)
 
-    def test_previous_month_row_uses_its_own_base(self):
+    def test_each_week_uses_its_own_base(self):
         open_items = [{'link': 'u1', 'created_at': '2026-09-01 10:00:00'}]
-        history = [_history('u2', '2026-10-27 09:00:00', '2026-10-29 09:00:00')]
+        history = [_history('u2', '2026-10-22 09:00:00', '2026-10-24 09:00:00')]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
-        row = trend['window_row']
-        assert row['label'] == '10-25~10-31（上月最后 7 天）'
-        assert row['period_closed'] == 1 and row['closed'] == 1
-        assert row['backlog'] == 1
-        assert round(row['rate'], 4) == 0.5           # 1 / (1 closed + 1 still open)
+        first = trend['rows'][0]
+        assert first['label'] == '10-21~10-27（上周）'
+        assert first['period_closed'] == 1
+        assert first['backlog'] == 1                  # only u1 is still open on 10-27
+        assert round(first['rate'], 4) == 0.5         # 1 / (1 closed + 1 still open)
+        assert trend['rows'][1]['period_closed'] == 0
 
     def test_reopened_item_counts_as_open(self):
         open_items = [{'link': 'u1', 'created_at': '2026-10-01 10:00:00'}]
         history = [_history('u1', '2026-10-01 10:00:00', '2026-11-02 10:00:00')]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
-        assert trend['rows'][-1]['closed'] == 0
+        assert trend['rows'][-1]['period_closed'] == 0
         assert trend['rows'][-1]['backlog'] == 1
 
     def test_empty_period_has_no_rate(self):
@@ -348,44 +369,39 @@ class TestSigTrends:
 class TestClosureTrendRendering:
     def test_table_uses_the_same_columns_as_the_sig_tables(self):
         trend = {
-            'month_label': '11 月',
-            'window_row': {'label': '10-25~10-31（上月最后 7 天）', 'backlog': 4, 'overdue': 2,
-                           'severe': 1, 'period_closed': 4, 'closed': 4, 'rate': 0.5,
-                           'rate_text': '50.0%'},
-            'rows': [{'label': '11-01~11-05（截至今日）', 'backlog': 6, 'overdue': 3,
-                      'severe': 1, 'period_closed': 2, 'closed': 6, 'rate': 0.5,
+            'window_label': '10-22~11-04',
+            'rows': [{'label': '10-22~10-28（上周）', 'backlog': 6, 'overdue': 3,
+                      'severe': 1, 'period_closed': 2, 'rate': 0.5,
                       'rate_text': '50.0%'}],
         }
         html = render_closure_trend(trend, 'PR')
-        assert '全社区 PR 闭环趋势（11 月）' in html
-        for header in ('统计区间', '待处理', '超期', '严重超期', '期间闭环', '累计闭环', '闭环率'):
+        assert '全社区 PR 闭环趋势（10-22~11-04）' in html
+        for header in ('统计区间', '待处理', '超期', '严重超期', '期间闭环', '闭环率'):
             assert '>{}<'.format(header) in html
-        assert '>累计新增<' not in html
+        assert '>累计闭环<' not in html
         assert '50.0%' in html
         assert 'width:50%' in html            # bar width follows the rate
 
     def test_zero_rate_shows_dash(self):
-        trend = {'month_label': '11 月',
-                 'window_row': {'label': 'x', 'backlog': 0, 'overdue': 0, 'severe': 0,
-                                'period_closed': 0, 'closed': 0, 'rate': None,
-                                'rate_text': '-'},
-                 'rows': []}
+        trend = {'window_label': 'x',
+                 'rows': [{'label': 'x', 'backlog': 0, 'overdue': 0, 'severe': 0,
+                           'period_closed': 0, 'rate': None, 'rate_text': '-'}]}
         html = render_closure_trend(trend, 'Issue')
         assert '>-<' in html
 
     def test_sig_trends_repeat_the_header_per_sig_and_are_sorted(self):
-        point = {'label': '11-01~11-05（截至今日）', 'backlog': 3, 'overdue': 1,
-                 'severe': 0, 'period_closed': 1, 'closed': 1, 'rate': 0.25,
+        point = {'label': '10-28~11-04（本周）', 'backlog': 3, 'overdue': 1,
+                 'severe': 0, 'period_closed': 1, 'rate': 0.25,
                  'rate_text': '25.0%'}
         sig_trends = {
-            'BoostVirt': {'month_label': '11 月', 'window_row': point, 'rows': []},
-            'BoostCore': {'month_label': '11 月', 'window_row': point, 'rows': []},
+            'BoostVirt': {'window_label': '10-22~11-04', 'rows': [point]},
+            'BoostCore': {'window_label': '10-22~11-04', 'rows': [point]},
         }
         html = render_sig_trends(sig_trends, 'PR')
         assert '各 SIG PR 闭环趋势' in html
         assert html.count('统计区间') == 2                 # header repeated per SIG block
         assert html.index('BoostCore') < html.index('BoostVirt')
-        assert 'colspan="7"' in html
+        assert 'colspan="6"' in html
 
     def test_sig_trends_empty_renders_nothing(self):
         assert render_sig_trends({}, 'PR') == ''

@@ -38,6 +38,7 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 | `email_reply_to` | 环境变量 | 退订回复邮箱，默认 `huanglei227@h-partners.com` |
 | `GITCODE_TOKEN` | 凭据注入（Secret text，已配置在 job 中，参照配置页） | BoostKit 周报、资料汇总与 QA 汇总 job 都需要；GitCode 个人访问令牌 |
 | `DRY_RUN` / `test_reviever_email` / `TEST_USER` | 构建参数（可选） | 验证模式，见下节 |
+| `QA_CLOSURE_TREND` | QA job 的 Boolean 构建参数（默认不勾） | 不勾 = 按周三自动（周三带趋势、周五只发常规提醒）；勾选 = 本次运行强制生成趋势区，用于非周三提前预览 |
 
 > 注意：openEuler 的存量 job 执行命令要从旧的 `jenkins_job.sh` 改为 `jenkins_job_openeuler.sh`（脚本已改名）。
 
@@ -47,8 +48,9 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 2. 构建步骤粘贴 `jenkins_job_boostkit.sh` 全文。
 3. 配置 SMTP 相关环境变量（同上表）。
 4. 用 "Secret text" 凭据绑定注入 `GITCODE_TOKEN`。
-5. 配置定时调度（Build periodically）。
-6. 按下节流程验证后再放开真实发送。
+5. 配置定时调度（Build periodically）。QA 汇总 job 用 `H 8 * * 3,5`：周三、周五各一次——**周三**的邮件带闭环趋势统计，**周五**只发常规的 PR/Issue 提醒（无趋势区、无 SIG 汇总行）。
+6. QA 汇总 job 再加一个 **Boolean 参数** `QA_CLOSURE_TREND`（默认不勾）：平时不用管，不勾选时按周三/周五规则；想提前看效果时勾选后手动构建，本次就会生成带趋势的邮件。注意**不要**给它设默认 true，否则周五也会带统计。
+7. 按下节流程验证后再放开真实发送。
 
 ## 上线验证流程（新社区/大改动必走）
 
@@ -68,6 +70,16 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 
 单用户排查：`TEST_USER=<gitcode_id> DRY_RUN=true`，只看某一个人的报表。
 
+### 非周三提前看闭环趋势
+
+QA 汇总的趋势区默认只在周三构建生成。想提前看效果，不需要等到周三：
+
+1. 勾选参数 `QA_CLOSURE_TREND`；
+2. 先用 `DRY_RUN=true` 构建 → 从 `test_output.tar.gz` 的 `qa_pr_all.html` / `qa_issue_all.html` 看渲染效果；
+3. 需要真实邮件时再设 `test_reviever_email=<你的邮箱>` 构建，两封邮件都会带上趋势区。
+
+趋势窗口固定为「上上周三~上周三、上周三~本周三」的对比，无论哪一天手动触发，统计口径都不变。
+
 ## 日志与产物
 
 | 位置 | 内容 |
@@ -84,7 +96,7 @@ Jenkins 实例：<https://ci.openeuler.openatom.cn>，现有 job：
 - **某 SIG 整组缺失**：先看该 SIG 的 `sig-info.yaml` 是否存在且格式正确（BoostKit 以它为仓库清单来源，`repo_source: sig_info`）。
 - **某人收不到邮件**：按序排查——① 其 gitcode_id 是否在 `<community>/email_mapping.yaml` 中且邮箱非空；② `email_controls.yaml` 是否配置了退订；③ 日志中是否有 `does not match any email address` 警告（说明 sig-info.yaml 里没填邮箱）。
 - **GitCode API 报错/限流**：确认 `GITCODE_TOKEN` 有效；实测全量 320 次调用约 2 分钟，无 429。资料汇总与 QA 汇总 job 会各自再跑一轮全量抓取，所以 BoostKit 的三个 job 建议错开调度，避免同时打 API。
-- **QA 汇总运行变慢**：正常。开启 `qa_report.closure_trend` 后，每次运行会额外对每个仓库拉一轮 `state=all&since=<上月最后 7 天首日>`（PR、Issue 各一次），调用量约翻倍，实测从约 2 分钟增至 4~5 分钟。
+- **QA 汇总运行变慢**：正常。周三开启 `qa_report.closure_trend` 时会额外对每个仓库拉一轮 `state=all&since=<上上周三>`（PR、Issue 各一次），调用量约翻倍，实测从约 2 分钟增至 4~5 分钟；周五不发趋势，不会多这轮调用。
 - **资料汇总收不到邮件**：按序排查——① `communities.yaml` 的 `docs_report.receivers` 是否配了名单（默认是空列表，此时日志里会有 `No docs_report receiver could be resolved`）；② 收件人写的是 gitcode_id 时，该 id 是否在 `docs_report.workdir` 下的 `email_mapping.yaml` 里且邮箱非空（不是 SIG 成员就查不到，此时直接在配置里写邮箱）；③ `email_controls.yaml` 是否退订了 `docs_pr` / `docs_issue`；④ 本期确实没有资料相关条目时不会发空邮件，日志里会有 `No rows for docs_pr, skip docs_pr email`。
 - **资料汇总里出现了没改文档的 PR**：先看它的标签是否在 `docs_report.pr_labels` 里，再回查该 PR 的改动文件是否匹配 `docs` / `README.md` / `README_en.md`（标签由 robot 按改动路径自动打，路径表和仓库覆盖范围在 robot 配置里维护，不在本仓库）。**不要把 `docs-ci-pipeline-*` 加进 `pr_labels`**：它是仓库级 CI 状态标签，配了资料流水线的仓库里所有 PR 都会带。
 - **QA 社区汇总收不到邮件**：按序排查——① `qa_report.receivers_sig` 指向的 `sig/<SIG>/sig-info.yaml` 是否存在于运行目录的 `community/` 下（克隆失败或 SIG 改名都会导致取不到人，日志有 `sig-info.yaml of sig ... not found`）；② 该 SIG 成员是否都填了 `email`（缺邮箱的人会被跳过，日志有 `has no email`）；③ `email_controls.yaml` 是否退订了 `qa_pr` / `qa_issue`（键是 sig-info 里的 gitcode_id）；④ 社区当期没有待处理条目时不会发空邮件。成员变动（新增/移除 maintainer、换邮箱）**无需改配置**，下一次运行自动生效。**注意**：当前 QA maintainer 使用 163 个人邮箱，未认证 SMTP 发出的邮件容易被判为垃圾邮件，需提醒收件人加白名单或改用企业邮箱。
