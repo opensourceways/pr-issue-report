@@ -607,7 +607,6 @@ SIG_STATS_TIER_RANGES = ('8~30 天', '31~365 天', '>365 天')
 SIG_STATS_FILL = 'E2EFDA'
 # SIG 闭环趋势表的列：时间 / 待处理 / 超期 / 严重超期（严重+长期合并）/ 闭环率
 SIG_TREND_HEADERS = ('时间', '待处理', '超期', '严重超期', '闭环率')
-SIG_TREND_HEADER_FILL = 'F2F2F2'
 
 
 def summarize_sig_rows(rows, duration_index):
@@ -748,9 +747,12 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         ws['A' + str(i)].alignment = alignment_center
 
         # SIG 统计行紧跟在 SIG 名称下方（仅 boostkit 等显式开启的社区传入 sig_stats）。
-        # SIG 标题行与统计行统一使用淡绿色底纹，让每个分组的汇总信息更醒目
+        # SIG 标题行、统计行与趋势表统一使用淡绿色底纹，让每个分组的汇总信息更醒目
         next_row = i + 1
         stats = sig_stats.get(sig_name) if sig_stats else None
+        trend = sig_trends.get(sig_name) if sig_trends else None
+        if stats or trend:
+            ws['A' + str(i)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
         if stats:
             ws.insert_rows(next_row)
             insert_count += 1
@@ -759,11 +761,9 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
             ws['A' + str(next_row)].alignment = alignment_center
             ws['A' + str(next_row)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
-            ws['A' + str(i)].fill = PatternFill('solid', start_color=SIG_STATS_FILL)
             next_row += 1
 
         # SIG 闭环趋势表（QA 邮件）：表头 + 每次触发的存量数据，紧跟在 SIG 名称下方
-        trend = sig_trends.get(sig_name) if sig_trends else None
         if trend:
             ws.insert_rows(next_row)
             insert_count += 1
@@ -848,15 +848,12 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             color = extra_fills.get(row[0].value)
             if color:
                 row[0].fill = PatternFill('solid', start_color=color)
-    # the trend rows use their own column semantics, so undo any colour the duration or
-    # status rules applied to them and give their header a light grey fill instead
-    for row_num in trend_data_rows:
-        for col in range(1, max_col + 1):
-            ws.cell(row=row_num, column=col).fill = PatternFill(fill_type=None)
-    for row_num in trend_header_rows:
+    # the trend rows use their own column semantics, so overwrite any colour the duration
+    # or status rules applied to them with the light green group band
+    for row_num in trend_header_rows + trend_data_rows:
         for col in range(1, max_col + 1):
             ws.cell(row=row_num, column=col).fill = PatternFill('solid',
-                                                                start_color=SIG_TREND_HEADER_FILL)
+                                                                start_color=SIG_STATS_FILL)
     # align center (duration column and, when present, the extra column)
     for row in ws.rows:
         for col in range(duration_col - 1, max_col):

@@ -771,8 +771,9 @@ class TestExcelOptimization:
 
         import openpyxl
         ws = openpyxl.load_workbook(xlsx).active
-        assert ws['A2'].fill.start_color.rgb == '00F2F2F2'      # trend header
-        assert ws['E3'].fill.fill_type is None                   # rate text is not coloured
+        assert ws['A1'].fill.start_color.rgb == '00E2EFDA'      # SIG title band
+        assert ws['A2'].fill.start_color.rgb == '00E2EFDA'      # trend header band
+        assert ws['E3'].fill.start_color.rgb == '00E2EFDA'      # trend data row band
 
 
 # ---------------------------------------------------------------------------

@@ -332,26 +332,29 @@ class TestSigTrends:
 
 
 class TestClosureTrendRendering:
-    def test_table_contains_cells_and_bar(self):
+    def test_table_uses_the_same_columns_as_the_sig_tables(self):
         trend = {
             'month_label': '11 月',
-            'window_row': {'label': '10-26~10-31（上月末周）', 'new': 3, 'closed': 2,
-                           'rate': 0.5, 'backlog': 4},
-            'rows': [{'label': '11-04（周三）', 'new': 5, 'closed': 2,
-                      'rate': 0.2857, 'backlog': 6}],
+            'window_row': {'label': '10-26~10-31（上月末周）', 'backlog': 4, 'overdue': 2,
+                           'severe': 1, 'rate': 0.5, 'rate_text': '50.0%'},
+            'rows': [{'label': '11-04（周三）', 'backlog': 6, 'overdue': 3,
+                      'severe': 1, 'rate': 0.2857, 'rate_text': '28.6%'}],
         }
         html = render_closure_trend(trend, 'PR')
-        assert '11 月 PR 闭环趋势' in html
-        assert '10-26~10-31（上月末周）' in html
+        assert '全社区 PR 闭环趋势（11 月）' in html
+        for header in ('时间', '待处理', '超期', '严重超期', '闭环率'):
+            assert '>{}<'.format(header) in html
+        assert '>累计新增<' not in html and '>累计闭环<' not in html
         assert '50.0%' in html and '28.6%' in html
         assert 'width:29%' in html            # bar width follows the rate
 
     def test_zero_rate_shows_dash(self):
         trend = {'month_label': '11 月',
-                 'window_row': {'label': 'x', 'new': 0, 'closed': 0, 'rate': None, 'backlog': 0},
+                 'window_row': {'label': 'x', 'backlog': 0, 'overdue': 0, 'severe': 0,
+                                'rate': None, 'rate_text': '-'},
                  'rows': []}
         html = render_closure_trend(trend, 'Issue')
-        assert '>-<'.replace(' ', '') in html.replace(' ', '')
+        assert '>-<' in html
 
 
 class TestDynamicReceivers:

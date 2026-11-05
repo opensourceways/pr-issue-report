@@ -148,7 +148,7 @@ QA 邮件里有两处趋势：正文最上方一张全社区总表（PR 邮件�
 - **无状态重算**：每次运行用 `state=all&since=<窗口起点>` 重新拉取窗口内所有变更过的项（PR、Issue 各一轮），按 `created_at` / `merged_at`（PR）或 `finished_at`（Issue）现算，不落盘、不依赖上一次运行，因此触发频率不影响曲线粒度。
 - **口径**：PR 以 merged 或 closed 为闭环，Issue 以 state=closed 为闭环；闭环率 = 累计闭环 /（期初未闭环 + 累计新增），期初未闭环 = 统计起点仍未关闭的项（含上月遗留、当月内才关闭的）。
 - **去重**：同一链接在 open 映射与历史列表中只保留一条，重开项按 open 计。
-- **渲染**：总表是纯 HTML 表格 + CSS 横条；SIG 小表由 `excel_optimization(sig_trends=...)` 插在 SIG 名称下方（表头浅灰 `F2F2F2`，数据行不参与开启天数/状态的配色）。无新增依赖；表下注明「仅统计 GitCode API 可见仓库」，私有仓库不计入。
+- **渲染**：正文顶部的全社区总表用与 SIG 小表完全相同的 5 列（`SIG_TREND_HEADERS`），只是额外在闭环率列画一条 CSS 横条；SIG 小表由 `excel_optimization(sig_trends=...)` 插在 SIG 名称下方，SIG 标题行与整段趋势表统一淡绿色底纹（`SIG_STATS_FILL`），数据行不参与开启天数/状态的配色。无新增依赖；表下注明「仅统计 GitCode API 可见仓库」，私有仓库不计入。
 
 ## 三种测试/验证模式
 

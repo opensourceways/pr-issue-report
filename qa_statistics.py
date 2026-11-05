@@ -274,7 +274,8 @@ def build_trends(sigs, kind, open_mapping, repo_sig, today=None):
 
 def render_closure_trend(trend, label):
     """
-    Render a closure trend section as an HTML fragment (table with CSS bars).
+    Render the community wide closure trend as an HTML fragment, using the same columns
+    and rows as the per-SIG tables in the report body.
     :param trend: result of build_closure_trend()
     :param label: 'PR' or 'Issue'
     :return: HTML string to prepend to the mail body
@@ -283,28 +284,29 @@ def render_closure_trend(trend, label):
     head_style = border + 'padding:6px 8px;background:#E2EFDA;font-weight:bold;text-align:center;'
     cell_style = border + 'padding:6px 8px;text-align:center;'
     name_style = border + 'padding:6px 8px;text-align:left;'
-    headers = ('阶段 / 日期', '累计新增', '累计闭环', '闭环率', '未闭环存量')
-    parts = ['<h3 style="margin:18px 0 8px">{} {} 闭环趋势</h3>'.format(trend['month_label'], label)]
+    parts = ['<h3 style="margin:18px 0 8px">全社区 {} 闭环趋势（{}）</h3>'.format(
+        label, trend['month_label'])]
     parts.append('<table cellspacing="0" cellpadding="0" '
                  'style="border-collapse:collapse;font-size:13px">')
     parts.append('<tr>{}</tr>'.format(
-        ''.join('<th style="{}">{}</th>'.format(head_style, h) for h in headers)))
+        ''.join('<th style="{}">{}</th>'.format(head_style, h) for h in SIG_TREND_HEADERS)))
     for row in [trend['window_row']] + trend['rows']:
         if row['rate'] is None:
-            rate_text, bar = '-', ''
+            bar = ''
         else:
             width = max(0, min(100, round(row['rate'] * 100)))
-            rate_text = '{:.1f}%'.format(row['rate'] * 100)
             bar = ('<div style="background:#eeeeee;width:70px;height:9px;display:inline-block;'
                    'vertical-align:middle;margin-left:6px">'
                    '<div style="background:#70AD47;height:9px;width:{}%"></div></div>').format(width)
         parts.append('<tr><td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
-                     '<td style="{}">{}{}</td><td style="{}">{}</td></tr>'.format(
-                         name_style, row['label'], cell_style, row['new'], cell_style,
-                         row['closed'], cell_style, rate_text, bar, cell_style, row['backlog']))
+                     '<td style="{}">{}</td><td style="{}">{}{}</td></tr>'.format(
+                         name_style, row['label'], cell_style, row['backlog'], cell_style,
+                         row['overdue'], cell_style, row['severe'], cell_style,
+                         row['rate_text'], bar))
     parts.append('</table>')
     parts.append('<p style="font-size:12px;color:#666;margin:6px 0 0">'
-                 '闭环率 = 累计闭环数 /（统计起点未闭环数 + 累计新增数）；'
+                 '闭环率 = 累计闭环数 /（累计闭环数 + 未闭环存量），即本统计段开始以来的总量中已闭环的比例；'
+                 '超期指开启天数 &gt; 7 天，严重超期指 &gt; 30 天；'
                  '仅统计 GitCode API 可见仓库，私有仓库不在其中。</p>')
     return ''.join(parts)
 
