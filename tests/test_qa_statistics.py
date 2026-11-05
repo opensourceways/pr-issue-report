@@ -373,7 +373,7 @@ class TestClosureTrendRendering:
         html = render_closure_trend(trend, 'Issue')
         assert '>-<' in html
 
-    def test_sig_trends_share_one_header_and_are_sorted(self):
+    def test_sig_trends_repeat_the_header_per_sig_and_are_sorted(self):
         point = {'label': '11-01~11-05（截至今日）', 'backlog': 3, 'overdue': 1,
                  'severe': 0, 'period_closed': 1, 'closed': 1, 'rate': 0.25,
                  'rate_text': '25.0%'}
@@ -383,7 +383,7 @@ class TestClosureTrendRendering:
         }
         html = render_sig_trends(sig_trends, 'PR')
         assert '各 SIG PR 闭环趋势' in html
-        assert html.count('统计区间') == 1                 # one shared header
+        assert html.count('统计区间') == 2                 # header repeated per SIG block
         assert html.index('BoostCore') < html.index('BoostVirt')
         assert 'colspan="7"' in html
 

@@ -331,16 +331,17 @@ def render_sig_trends(sig_trends, label):
     head_style = border + 'padding:6px 8px;background:#E2EFDA;font-weight:bold;text-align:center;'
     cell_style = border + 'padding:6px 8px;text-align:center;'
     name_style = border + 'padding:6px 8px;text-align:left;'
-    sig_style = (border + 'padding:8px;background:#E2EFDA;font-weight:bold;'
-                 'text-align:center;font-size:14px;')
+    sig_style = (border + 'border-top:2px solid #70AD47;padding:8px;background:#E2EFDA;'
+                 'font-weight:bold;text-align:center;font-size:14px;')
     parts = ['<h3 style="margin:18px 0 8px">各 SIG {} 闭环趋势</h3>'.format(label)]
     parts.append('<table cellspacing="0" cellpadding="0" '
                  'style="border-collapse:collapse;font-size:13px">')
-    parts.append(_trend_head_html(head_style))
     for sig_name in sorted(sig_trends):
         trend = sig_trends[sig_name]
         parts.append('<tr><td colspan="{}" style="{}">{}</td></tr>'.format(
             len(TREND_HEADERS), sig_style, sig_name))
+        # repeat the header for every SIG so the columns stay identifiable in a long mail
+        parts.append(_trend_head_html(head_style))
         for row in [trend['window_row']] + trend['rows']:
             parts.append(_trend_row_html(row, cell_style, name_style))
     parts.append('</table>')
