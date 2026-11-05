@@ -594,6 +594,53 @@ def count_duration(start_time):
 # "<a href='https://gitcode.com/<org>/<repo>/merge_requests/12'>#12</a>"
 LINK_CELL_RE = re.compile(r"^<a href=['\"]([^'\"]+)['\"]>(.*)</a>$", re.DOTALL)
 
+# 开启天数分档（报表配色与 SIG 统计共用）：(天数下限, 填充色)。分档为左开右闭，
+# 即第一档 7 < days <= 30，第二档 30 < days <= 365，第三档 days > 365
+DURATION_STAGES = (
+    (7, 'FFDAB9'),    # 超期
+    (30, 'FF7F50'),   # 严重超期
+    (365, 'FF4500'),  # 长期超期
+)
+SIG_STATS_TIER_LABELS = ('超期', '严重超期', '长期超期')
+SIG_STATS_TIER_RANGES = ('8~30 天', '31~365 天', '>365 天')
+
+
+def summarize_sig_rows(rows, duration_index):
+    """
+    Count open items of every SIG by duration stage.
+    :param rows: report rows, the first cell holds the SIG name
+    :param duration_index: index of the open-days cell in a row (6 for PR, 5 for Issue)
+    :return: {sig_name: [total, stage1_count, stage2_count, stage3_count]}, stage counts are
+             mutually exclusive so they sum up to the overdue items of that SIG
+    """
+    stats = {}
+    for row in rows:
+        try:
+            days = int(row[duration_index] or 0)
+        except (TypeError, ValueError):
+            days = 0
+        sig_stats = stats.setdefault(row[0], [0, 0, 0, 0])
+        sig_stats[0] += 1
+        for idx, (lower, _) in enumerate(DURATION_STAGES):
+            upper = DURATION_STAGES[idx + 1][0] if idx + 1 < len(DURATION_STAGES) else None
+            if days > lower and (upper is None or days <= upper):
+                sig_stats[idx + 1] += 1
+                break
+    return stats
+
+
+def format_sig_stats(stats, label='PR'):
+    """
+    Render the one-line SIG summary shown below the SIG name.
+    :param stats: [total, stage1_count, stage2_count, stage3_count] from summarize_sig_rows()
+    :param label: item type shown in the text ('PR' or 'Issue')
+    :return: e.g. '共 12 个待处理 PR ｜ 超期（8~30 天）3 个 ｜ 严重超期（31~365 天）2 个 ｜ 长期超期（>365 天）1 个'
+    """
+    parts = ['共 {} 个待处理 {}'.format(stats[0], label)]
+    for text, days_range, count in zip(SIG_STATS_TIER_LABELS, SIG_STATS_TIER_RANGES, stats[1:]):
+        parts.append('{}（{}）{} 个'.format(text, days_range, count))
+    return ' ｜ '.join(parts)
+
 
 def linkify_cells(worksheet):
     """
@@ -640,7 +687,8 @@ def csv_to_xlsx(filepath):
     return xlsx_filepath
 
 
-def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None, extra_fills=None):
+def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None, extra_fills=None,
+                       sig_stats=None, sig_label='PR'):
     """
     Adjust styles of the xlsx file
     :param filepath: path of the xlsx file
@@ -649,6 +697,9 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
     :param extra_header: optional header of one extra trailing column (the docs report uses it to
                          show the documentation label state). Omitted means the layout is unchanged
     :param extra_fills: optional {cell value: fill color} applied to that extra column
+    :param sig_stats: optional {sig_name: [total, stage1, stage2, stage3]} from
+                      summarize_sig_rows(); omitted means the layout is unchanged
+    :param sig_label: item type shown in the SIG summary line ('PR' or 'Issue')
     """
     if not filepath.endswith('.xlsx'):
         return
@@ -687,11 +738,22 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         ws.merge_cells(start_row=i, end_row=i, start_column=1, end_column=max_col)
         ws['A' + str(i)].alignment = alignment_center
 
+        # SIG 统计行紧跟在 SIG 名称下方（仅 boostkit 等显式开启的社区传入 sig_stats）
+        next_row = i + 1
+        stats = sig_stats.get(sig_name) if sig_stats else None
+        if stats:
+            ws.insert_rows(next_row)
+            insert_count += 1
+            ws['A' + str(next_row)] = format_sig_stats(stats, sig_label)
+            ws['A' + str(next_row)].font = Font(name='黑体', color='595959')
+            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
+            ws['A' + str(next_row)].alignment = alignment_center
+            next_row += 1
+
         # the compare row is skipped when no comparison data is available (e.g. the
         # boostkit sigs are not covered by the openEuler processed-rate API), so that
         # the mail does not show an empty line below every sig name
         compare_info = single_sig_compare(sig_name, compare_dict)
-        next_row = i + 1
         if compare_info:
             ws.insert_rows(next_row)
             insert_count += 1
@@ -720,23 +782,17 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
             col = chr(65 + idx)
             ws[col + str(original_header_row + 1)] = ws[col + str(original_header_row)].value
         ws.delete_rows(original_header_row)
-    # fill for the Duration column
+    # fill for the Duration column（分档阈值与 SIG 统计共用 DURATION_STAGES）
     cells = ws.iter_rows(min_row=3, min_col=duration_col, max_col=duration_col)
     yellow_fill = PatternFill("solid", start_color='FFFF00')
-    first_stage_fill = PatternFill('solid', start_color='FFDAB9')
-    second_stage_fill = PatternFill('solid', start_color='FF7F50')
-    third_stage_fill = PatternFill('solid', start_color='FF4500')
     for i in cells:
         try:
             value = int(i[0].value)
-            if 7 < value <= 30:
-                i[0].fill = first_stage_fill
-            elif 30 < value <= 365:
-                i[0].fill = second_stage_fill
-            elif value > 365:
-                i[0].fill = third_stage_fill
         except (TypeError, ValueError):
-            pass
+            continue
+        for lower, color in DURATION_STAGES:
+            if value > lower:
+                i[0].fill = PatternFill('solid', start_color=color)
     # fill for the status mark
     status_col = 4 if is_issue else 5   # D for issue, E for PR
     status = ws.iter_rows(min_row=3, min_col=status_col, max_col=status_col)

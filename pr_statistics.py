@@ -141,6 +141,8 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config=None
                     pr_committers = []
                 open_pr_info.append([sig_name, full_repo, ref_branch, number_link, link, status, duration,
                                      ','.join(maintainers), ','.join(pr_committers)])
+    # 全社区口径的 SIG 统计（不是收件人视角的子集），供邮件里的 SIG 名称下方展示
+    sig_stats = summarize_sig_rows(open_pr_info, 6) if config.get('sig_header_stats') else None
     no_addresses_id = []
     for pr_info in open_pr_info:
         pr_row = pr_info[:7]               # [sig_name, repo, branch, number_link, link, status, duration]
@@ -179,7 +181,8 @@ def pr_statistics(data_dir, sigs, repos_pulls_mapping, compare_dict, config=None
             writer.writerow(row)
         f.close()
         xlsx_path = csv_to_xlsx(csv_path)
-        excel_optimization(xlsx_path, compare_dict)
+        extra = {'sig_stats': sig_stats, 'sig_label': 'PR'} if sig_stats else {}
+        excel_optimization(xlsx_path, compare_dict, **extra)
         return xlsx_path.replace('.xlsx', '.html')
 
     def generate_pr_html(pr_list, receiver, role, compare_dict):

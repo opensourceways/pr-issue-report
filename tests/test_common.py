@@ -40,6 +40,7 @@ from common import (
     should_send,
     single_sig_compare,
     sort_rows_by_sig_duration,
+    summarize_sig_rows,
     write_dry_run_html,
 )
 
@@ -713,6 +714,36 @@ class TestExcelOptimization:
         assert rows[3][0] == 'sig-base'
         assert rows[4][0] == '仓库'
         assert rows[5][0] == 'openeuler/kernel'
+
+    def test_summarize_sig_rows_counts_duration_stages(self):
+        """Each duration stage is counted separately and belongs to its own SIG."""
+        pr_rows = [
+            ['sig-ai', 'repo', 'main', '#1', 't', '待合入', '3'],    # 未超期
+            ['sig-ai', 'repo', 'main', '#2', 't', '待合入', '10'],   # 超期
+            ['sig-ai', 'repo', 'main', '#3', 't', '待合入', '30'],   # 超期（上界）
+            ['sig-ai', 'repo', 'main', '#4', 't', '待合入', '40'],   # 严重超期
+            ['sig-ai', 'repo', 'main', '#5', 't', '待合入', '365'],  # 严重超期（上界）
+            ['sig-base', 'repo', 'main', '#6', 't', '待合入', '400'],  # 超长超期
+        ]
+        stats = summarize_sig_rows(pr_rows, 6)
+        assert stats['sig-ai'] == [5, 2, 2, 0]
+        assert stats['sig-base'] == [1, 0, 0, 1]
+
+    def test_sig_stats_row_rendered_below_sig_name(self, tmp_path):
+        """sig_stats adds one summary row between the SIG name and the table header."""
+        csv = (
+            'sig-ai,openeuler/ai-framework,main,<a href="#">#1</a>,<a href="#">PR1</a>,待合入,10\n'
+            'sig-ai,openeuler/ai-models,main,<a href="#">#2</a>,<a href="#">PR2</a>,待合入,40\n'
+            'sig-ai,openeuler/ai-models,main,<a href="#">#3</a>,<a href="#">PR3</a>,待合入,400\n'
+        )
+        xlsx = self._make_xlsx(tmp_path, csv, 'sig_stats')
+        sig_stats = {'sig-ai': [3, 1, 1, 1]}
+        excel_optimization(xlsx, {}, is_issue=False, sig_stats=sig_stats)
+        rows = _sheet_rows(xlsx)
+        assert rows[0][0] == 'sig-ai'
+        assert rows[1][0] == ('共 3 个待处理 PR ｜ 超期（8~30 天）1 个 ｜ '
+                              '严重超期（31~365 天）1 个 ｜ 长期超期（>365 天）1 个')
+        assert rows[2][0] == '仓库'
 
 
 # ---------------------------------------------------------------------------

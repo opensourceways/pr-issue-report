@@ -27,6 +27,9 @@ boostkit:
   ci_failed_label: ''              # BoostKit CI 失败标签未知，暂不检测
   wait_update_label: kind/wait_for_update
   processed_rate: none             # dsapi 不支持 boostkit，跳过周对比
+  # 在每封报表邮件的 SIG 名称下方追加一行统计（总数 / 超期 / 严重超期 / 长期超期），
+  # 分档与开启天数的配色一致；openEuler 未开启，报表保持原样
+  sig_header_stats: true
   skip_sigs: []
   mail_subject_pr: BoostKit 待处理PR汇总
   mail_body_pr: 以下是您参与BoostKit社区的待处理PR汇总，不同部分代表您在不同角色下需要关注的PR。

@@ -133,6 +133,8 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, config=
                 # 6-column format: no branch column for issues
                 open_issue_info.append([sig_name, full_repo, number_link, link, status, duration,
                                         ','.join(maintainers), ','.join(issue_committers)])
+    # 全社区口径的 SIG 统计（不是收件人视角的子集），供邮件里的 SIG 名称下方展示
+    sig_stats = summarize_sig_rows(open_issue_info, 5) if config.get('sig_header_stats') else None
     no_addresses_id = []
     for issue_info in open_issue_info:
         issue_row = issue_info[:6]              # [sig_name, repo, number, title, status, duration]
@@ -170,7 +172,8 @@ def issue_statistics(data_dir, sigs, repos_issues_mapping, compare_dict, config=
             writer.writerow(row)
         f.close()
         xlsx_path = csv_to_xlsx(csv_path)
-        excel_optimization(xlsx_path, compare_dict, is_issue=True)
+        extra = {'sig_stats': sig_stats, 'sig_label': 'Issue'} if sig_stats else {}
+        excel_optimization(xlsx_path, compare_dict, is_issue=True, **extra)
         return xlsx_path.replace('.xlsx', '.html')
 
     def generate_issue_html(issue_list, receiver, role, compare_dict):

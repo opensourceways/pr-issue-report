@@ -312,8 +312,11 @@ def send_community_report(data_dir, csv_name, mail_type, rows, is_issue, subject
     with codecs.open(csv_path, 'w', encoding='utf-8') as f:
         csv.writer(f).writerows(sort_rows_by_sig_duration(rows, 5 if is_issue else 6))
     xlsx_path = csv_to_xlsx(csv_path)
+    # SIG 统计按本报表的行（社区汇总为全量，资料汇总为资料口径）计算
+    sig_stats = summarize_sig_rows(rows, 5 if is_issue else 6) if config.get('sig_header_stats') else None
+    stats_kwargs = {'sig_stats': sig_stats, 'sig_label': 'Issue' if is_issue else 'PR'} if sig_stats else {}
     excel_optimization(xlsx_path, compare_dict, is_issue=is_issue, extra_header=extra_header,
-                       extra_fills=extra_fills)
+                       extra_fills=extra_fills, **stats_kwargs)
     merged_html = merge_html_parts([(title, xlsx_path.replace('.xlsx', '.html'))], mail_type)
     log.logger.info('Generated {} report with {} rows'.format(mail_type, len(rows)))
     if dry_run:
