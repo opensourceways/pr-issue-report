@@ -631,15 +631,17 @@ def summarize_sig_rows(rows, duration_index):
 
 def format_sig_stats(stats, label='PR'):
     """
-    Render the one-line SIG summary shown below the SIG name.
+    Split the SIG summary into one string per cell (total + one per duration stage),
+    so that the stats are separated by cells instead of by a separator character.
     :param stats: [total, stage1_count, stage2_count, stage3_count] from summarize_sig_rows()
     :param label: item type shown in the text ('PR' or 'Issue')
-    :return: e.g. '共 12 个待处理 PR ｜ 超期（8~30 天）3 个 ｜ 严重超期（31~365 天）2 个 ｜ 长期超期（>365 天）1 个'
+    :return: list of 4 strings, e.g.
+             ['共 12 个待处理 PR', '超期（8~30 天）3 个', '严重超期（31~365 天）2 个', '长期超期（>365 天）1 个']
     """
-    parts = ['共 {} 个待处理 {}'.format(stats[0], label)]
+    cells = ['共 {} 个待处理 {}'.format(stats[0], label)]
     for text, days_range, count in zip(SIG_STATS_TIER_LABELS, SIG_STATS_TIER_RANGES, stats[1:]):
-        parts.append('{}（{}）{} 个'.format(text, days_range, count))
-    return ' ｜ '.join(parts)
+        cells.append('{}（{}）{} 个'.format(text, days_range, count))
+    return cells
 
 
 def linkify_cells(worksheet):
@@ -738,16 +740,24 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
         ws.merge_cells(start_row=i, end_row=i, start_column=1, end_column=max_col)
         ws['A' + str(i)].alignment = alignment_center
 
-        # SIG 统计行紧跟在 SIG 名称下方（仅 boostkit 等显式开启的社区传入 sig_stats）
+        # SIG 统计行紧跟在 SIG 名称下方（仅 boostkit 等显式开启的社区传入 sig_stats）。
+        # 每项统计单独占用一个单元格，最后一格向右合并到整行末尾，避免用分隔符拼成一行
         next_row = i + 1
         stats = sig_stats.get(sig_name) if sig_stats else None
         if stats:
             ws.insert_rows(next_row)
             insert_count += 1
-            ws['A' + str(next_row)] = format_sig_stats(stats, sig_label)
-            ws['A' + str(next_row)].font = Font(name='黑体', color='595959')
-            ws.merge_cells(start_row=next_row, end_row=next_row, start_column=1, end_column=max_col)
-            ws['A' + str(next_row)].alignment = alignment_center
+            cells = format_sig_stats(stats, sig_label)
+            stats_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            for idx, text in enumerate(cells):
+                cell = ws[chr(65 + idx) + str(next_row)]
+                cell.value = text
+                cell.font = Font(name='黑体', color='595959')
+                cell.alignment = stats_alignment
+            if max_col > len(cells):
+                ws.merge_cells(start_row=next_row, end_row=next_row,
+                               start_column=len(cells), end_column=max_col)
+                ws[chr(65 + len(cells) - 1) + str(next_row)].alignment = stats_alignment
             next_row += 1
 
         # the compare row is skipped when no comparison data is available (e.g. the

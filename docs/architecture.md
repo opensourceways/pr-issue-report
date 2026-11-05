@@ -78,7 +78,7 @@ QA 社区汇总（`qa_statistics.py`）与资料汇总同构，区别只在：�
 | Email mapping | `create_email_mappings()`、`get_email_mappings()` | 从 sig-info.yaml 提取 gitcode_id → 邮箱，生成 email_mapping.yaml |
 | Email controls | `MAIL_TYPES`、`load_email_controls()`、`should_send()`、`expand_controls()` | 退订/偏好过滤；邮件类型与角色登记在 `MAIL_TYPES`，新增类型改这里即可 |
 | Helpers | `fill_status()`、`sort_rows_by_sig_duration()`、`clean_env()` | 状态文案、报表行排序（SIG 升序 + 组内开启天数降序）、临时目录清理 |
-| Excel/HTML | `csv_to_xlsx()`、`excel_optimization()`、`linkify_cells()`、`summarize_sig_rows()`、`format_sig_stats()` | 报表生成：按 SIG 分组标题、开启天数着色（7/30/365 天三档）、异常状态标黄；可选 `extra_header`/`extra_fills` 追加一列（资料报表的「资料状态」列，默认不传即与周报完全一致）；可选 `sig_stats` 在 SIG 名称下追加一行统计（总数/超期/严重超期/长期超期，默认不传则布局不变）。链接单元格（编号/标题）在导出前由 `linkify_cells()` 转成**真实 Excel 超链接**，见下 |
+| Excel/HTML | `csv_to_xlsx()`、`excel_optimization()`、`linkify_cells()`、`summarize_sig_rows()`、`format_sig_stats()` | 报表生成：按 SIG 分组标题、开启天数着色（7/30/365 天三档）、异常状态标黄；可选 `extra_header`/`extra_fills` 追加一列（资料报表的「资料状态」列，默认不传即与周报完全一致）；可选 `sig_stats` 在 SIG 名称下追加一行统计（总数/超期/严重超期/长期超期，每项单独占一个单元格，默认不传则布局不变）。链接单元格（编号/标题）在导出前由 `linkify_cells()` 转成**真实 Excel 超链接**，见下 |
 | Email sending | `send_email()`、`merge_html_parts()`、`write_dry_run_html()` | SMTP 发送；合并 Maintainer/Committer 两部分；DRY_RUN 本地输出 |
 | Processed-rate | `all_sigs_compare()`、`compare_sig_processed_rate()` | dsapi 周对比；`processed_rate: none` 的社区直接返回空 |
 | GitCode API | `gitcode_open_items()`、`gitcode_fetch_repo_items()`、`adapt_gitcode_pr()`、`adapt_gitcode_issue()` | gitcode_api 数据源：逐仓库拉取并适配为内部格式 |
