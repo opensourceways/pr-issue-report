@@ -605,8 +605,9 @@ SIG_STATS_TIER_LABELS = ('超期', '严重超期', '长期超期')
 SIG_STATS_TIER_RANGES = ('8~30 天', '31~365 天', '>365 天')
 # SIG 标题行与统计行的淡绿色底纹（仅在开启 sig_stats 的社区使用）
 SIG_STATS_FILL = 'E2EFDA'
-# SIG 闭环趋势表的列：时间 / 待处理 / 超期 / 严重超期（严重+长期合并）/ 闭环率
-SIG_TREND_HEADERS = ('时间', '待处理', '超期', '严重超期', '闭环率')
+# SIG 闭环趋势表的列：时间 / 待处理（未闭环存量）/ 超期 / 严重超期（严重+长期合并）/
+# 累计闭环 / 闭环率。闭环率 = 累计闭环 /（累计闭环 + 待处理），因此这两列都必须给出
+SIG_TREND_HEADERS = ('时间', '待处理', '超期', '严重超期', '累计闭环', '闭环率')
 
 
 def summarize_sig_rows(rows, duration_index):
@@ -778,7 +779,7 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
                 ws.insert_rows(next_row)
                 insert_count += 1
                 values = [point['label'], point['backlog'], point['overdue'],
-                          point['severe'], point['rate_text']]
+                          point['severe'], point['closed'], point['rate_text']]
                 for idx, value in enumerate(values):
                     cell = ws[chr(65 + idx) + str(next_row)]
                     cell.value = value
@@ -850,8 +851,9 @@ def excel_optimization(filepath, compare_dict, is_issue=False, extra_header=None
                 row[0].fill = PatternFill('solid', start_color=color)
     # the trend rows use their own column semantics, so overwrite any colour the duration
     # or status rules applied to them with the light green group band
+    trend_cols = max(max_col, len(SIG_TREND_HEADERS))
     for row_num in trend_header_rows + trend_data_rows:
-        for col in range(1, max_col + 1):
+        for col in range(1, trend_cols + 1):
             ws.cell(row=row_num, column=col).fill = PatternFill('solid',
                                                                 start_color=SIG_STATS_FILL)
     # align center (duration column and, when present, the extra column)

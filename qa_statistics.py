@@ -299,13 +299,13 @@ def render_closure_trend(trend, label):
                    'vertical-align:middle;margin-left:6px">'
                    '<div style="background:#70AD47;height:9px;width:{}%"></div></div>').format(width)
         parts.append('<tr><td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
-                     '<td style="{}">{}</td><td style="{}">{}{}</td></tr>'.format(
-                         name_style, row['label'], cell_style, row['backlog'], cell_style,
-                         row['overdue'], cell_style, row['severe'], cell_style,
-                         row['rate_text'], bar))
+                     '<td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}{}</td></tr>'
+                     .format(name_style, row['label'], cell_style, row['backlog'], cell_style,
+                             row['overdue'], cell_style, row['severe'], cell_style,
+                             row['closed'], cell_style, row['rate_text'], bar))
     parts.append('</table>')
     parts.append('<p style="font-size:12px;color:#666;margin:6px 0 0">'
-                 '闭环率 = 累计闭环数 /（累计闭环数 + 未闭环存量），即本统计段开始以来的总量中已闭环的比例；'
+                 '闭环率 = 累计闭环 /（累计闭环 + 待处理），待处理即该时点的未闭环存量；'
                  '超期指开启天数 &gt; 7 天，严重超期指 &gt; 30 天；'
                  '仅统计 GitCode API 可见仓库，私有仓库不在其中。</p>')
     return ''.join(parts)

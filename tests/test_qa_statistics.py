@@ -336,22 +336,22 @@ class TestClosureTrendRendering:
         trend = {
             'month_label': '11 月',
             'window_row': {'label': '10-26~10-31（上月末周）', 'backlog': 4, 'overdue': 2,
-                           'severe': 1, 'rate': 0.5, 'rate_text': '50.0%'},
+                           'severe': 1, 'closed': 4, 'rate': 0.5, 'rate_text': '50.0%'},
             'rows': [{'label': '11-04（周三）', 'backlog': 6, 'overdue': 3,
-                      'severe': 1, 'rate': 0.2857, 'rate_text': '28.6%'}],
+                      'severe': 1, 'closed': 2, 'rate': 0.25, 'rate_text': '25.0%'}],
         }
         html = render_closure_trend(trend, 'PR')
         assert '全社区 PR 闭环趋势（11 月）' in html
-        for header in ('时间', '待处理', '超期', '严重超期', '闭环率'):
+        for header in ('时间', '待处理', '超期', '严重超期', '累计闭环', '闭环率'):
             assert '>{}<'.format(header) in html
-        assert '>累计新增<' not in html and '>累计闭环<' not in html
-        assert '50.0%' in html and '28.6%' in html
-        assert 'width:29%' in html            # bar width follows the rate
+        assert '>累计新增<' not in html
+        assert '50.0%' in html and '25.0%' in html
+        assert 'width:25%' in html            # bar width follows the rate
 
     def test_zero_rate_shows_dash(self):
         trend = {'month_label': '11 月',
                  'window_row': {'label': 'x', 'backlog': 0, 'overdue': 0, 'severe': 0,
-                                'rate': None, 'rate_text': '-'},
+                                'closed': 0, 'rate': None, 'rate_text': '-'},
                  'rows': []}
         html = render_closure_trend(trend, 'Issue')
         assert '>-<' in html
