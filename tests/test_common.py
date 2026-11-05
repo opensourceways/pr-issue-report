@@ -759,21 +759,21 @@ class TestExcelOptimization:
         )
         xlsx = self._make_xlsx(tmp_path, csv, 'sig_trend')
         point = {'label': '10-26~10-31（上月末周）', 'backlog': 5, 'overdue': 2,
-                 'severe': 1, 'closed': 3, 'rate_text': '37.5%'}
+                 'severe': 1, 'period_closed': 3, 'closed': 3, 'rate_text': '37.5%'}
         trends = {'sig-ai': {'month_label': '11 月', 'window_row': point, 'rows': []}}
         excel_optimization(xlsx, {}, is_issue=False, sig_trends=trends)
 
         rows = _sheet_rows(xlsx)
         assert rows[0][0] == 'sig-ai'
-        assert rows[1][:6] == ['时间', '待处理', '超期', '严重超期', '累计闭环', '闭环率']
-        assert rows[2][:6] == ['10-26~10-31（上月末周）', 5, 2, 1, 3, '37.5%']
+        assert rows[1][:7] == ['统计区间', '待处理', '超期', '严重超期', '期间闭环', '累计闭环', '闭环率']
+        assert rows[2][:7] == ['10-26~10-31（上月末周）', 5, 2, 1, 3, 3, '37.5%']
         assert rows[3][0] == '仓库'
 
         import openpyxl
         ws = openpyxl.load_workbook(xlsx).active
         assert ws['A1'].fill.start_color.rgb == '00E2EFDA'      # SIG title band
         assert ws['A2'].fill.start_color.rgb == '00E2EFDA'      # trend header band
-        assert ws['F3'].fill.start_color.rgb == '00E2EFDA'      # last trend column band
+        assert ws['G3'].fill.start_color.rgb == '00E2EFDA'      # last trend column band
 
 
 # ---------------------------------------------------------------------------

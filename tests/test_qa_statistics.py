@@ -9,7 +9,7 @@ import yaml
 from docs_statistics import resolve_recipients
 from qa_statistics import (build_closure_trend, build_sig_trends, dedupe_rows, main,
                            month_trend_window, qa_statistics, render_closure_trend,
-                           repo_of_link, repo_sig_mapping, trigger_days)
+                           repo_of_link, repo_sig_mapping, week_intervals)
 
 QA_RECEIVERS = ['mengjiefamily@163.com', 'lcxzydhyy@163.com']
 
@@ -233,9 +233,15 @@ class TestClosureTrendWindow:
         assert window_start == datetime.date(2026, 5, 25)
         assert month_start == datetime.date(2026, 6, 1)
 
-    def test_trigger_days_are_wednesday_and_friday(self):
-        days = trigger_days(datetime.date(2026, 11, 1), datetime.date(2026, 11, 8))
-        assert days == [datetime.date(2026, 11, 4), datetime.date(2026, 11, 6)]
+    def test_intervals_are_natural_weeks_clipped_to_the_window(self):
+        # Nov 1 2026 is a Sunday, so it forms a single-day first interval
+        intervals = week_intervals(datetime.date(2026, 10, 26), datetime.date(2026, 11, 1),
+                                   datetime.date(2026, 11, 5))
+        assert intervals == [
+            (datetime.date(2026, 10, 26), datetime.date(2026, 10, 31)),
+            (datetime.date(2026, 11, 1), datetime.date(2026, 11, 1)),
+            (datetime.date(2026, 11, 2), datetime.date(2026, 11, 5)),   # current week, partial
+        ]
 
 
 class TestClosureTrendNumbers:
@@ -252,11 +258,11 @@ class TestClosureTrendNumbers:
         ]
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
 
-        # 11-04 is the only trigger day before 11-05 plus today itself
-        assert [r['label'] for r in trend['rows']] == ['11-04（周三）', '11-05（当天）']
+        # Nov 1 is a Sunday (single-day week), the current week is 11-02~11-05
+        assert [r['label'] for r in trend['rows']] == ['11-01', '11-02~11-05（本周至今）']
         last = trend['rows'][-1]
-        assert last['new'] == 2                       # u3, u4
-        assert last['closed'] == 2                    # u3, u5
+        assert last['period_closed'] == 2             # u3, u5 closed in 11-02~11-05
+        assert last['closed'] == 2                    # nothing closed on 11-01
         # month-start backlog is 3: u1, u2 and u5 (created in October, closed in November)
         assert last['backlog'] == 3 + 2 - 2
         assert round(last['rate'], 4) == round(2 / 5, 4)
@@ -267,8 +273,9 @@ class TestClosureTrendNumbers:
         trend = build_closure_trend(open_items, history, today=datetime.date(2026, 11, 5))
         row = trend['window_row']
         assert row['label'] == '10-26~10-31（上月末周）'
-        assert row['new'] == 1 and row['closed'] == 1
-        assert round(row['rate'], 4) == 0.5           # 1 / (1 inherited + 1 new)
+        assert row['period_closed'] == 1 and row['closed'] == 1
+        assert row['backlog'] == 1
+        assert round(row['rate'], 4) == 0.5           # 1 / (1 closed + 1 still open)
 
     def test_reopened_item_counts_as_open(self):
         open_items = [{'link': 'u1', 'created_at': '2026-10-01 10:00:00'}]
@@ -336,22 +343,25 @@ class TestClosureTrendRendering:
         trend = {
             'month_label': '11 月',
             'window_row': {'label': '10-26~10-31（上月末周）', 'backlog': 4, 'overdue': 2,
-                           'severe': 1, 'closed': 4, 'rate': 0.5, 'rate_text': '50.0%'},
-            'rows': [{'label': '11-04（周三）', 'backlog': 6, 'overdue': 3,
-                      'severe': 1, 'closed': 2, 'rate': 0.25, 'rate_text': '25.0%'}],
+                           'severe': 1, 'period_closed': 4, 'closed': 4, 'rate': 0.5,
+                           'rate_text': '50.0%'},
+            'rows': [{'label': '11-02~11-05（本周至今）', 'backlog': 6, 'overdue': 3,
+                      'severe': 1, 'period_closed': 2, 'closed': 6, 'rate': 0.5,
+                      'rate_text': '50.0%'}],
         }
         html = render_closure_trend(trend, 'PR')
         assert '全社区 PR 闭环趋势（11 月）' in html
-        for header in ('时间', '待处理', '超期', '严重超期', '累计闭环', '闭环率'):
+        for header in ('统计区间', '待处理', '超期', '严重超期', '期间闭环', '累计闭环', '闭环率'):
             assert '>{}<'.format(header) in html
         assert '>累计新增<' not in html
-        assert '50.0%' in html and '25.0%' in html
-        assert 'width:25%' in html            # bar width follows the rate
+        assert '50.0%' in html
+        assert 'width:50%' in html            # bar width follows the rate
 
     def test_zero_rate_shows_dash(self):
         trend = {'month_label': '11 月',
                  'window_row': {'label': 'x', 'backlog': 0, 'overdue': 0, 'severe': 0,
-                                'closed': 0, 'rate': None, 'rate_text': '-'},
+                                'period_closed': 0, 'closed': 0, 'rate': None,
+                                'rate_text': '-'},
                  'rows': []}
         html = render_closure_trend(trend, 'Issue')
         assert '>-<' in html

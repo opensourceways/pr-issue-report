@@ -19,9 +19,6 @@ from docs_statistics import (collect_issue_rows, collect_pr_rows, resolve_recipi
 from issue_statistics import get_repos_issues_mapping
 from pr_statistics import get_repos_pulls_mapping
 
-# 报表触发日：周三、周五（与 Jenkins 调度一致），趋势按这些日期取点
-TREND_WEEKDAYS = (2, 4)
-
 
 def dedupe_rows(rows, link_col):
     """
@@ -61,21 +58,24 @@ def month_trend_window(today):
     return prev_month_last - datetime.timedelta(days=prev_month_last.weekday()), month_start
 
 
-def trigger_days(start, end, weekdays=TREND_WEEKDAYS):
+def week_intervals(window_start, month_start, today):
     """
-    List the report trigger days inside [start, end].
-    :param start: first date (inclusive)
-    :param end: last date (inclusive)
-    :param weekdays: weekday numbers, 0 = Monday; defaults to Wednesday and Friday
-    :return: list of dates
+    Natural-week intervals (Monday~Sunday) covering the whole trend, clipped to it.
+    The previous month's last week is one baseline interval; the current month is cut
+    into weeks starting at the 1st, so its first and last intervals may be partial.
+    :return: list of (start_day, end_day)
     """
-    days = []
-    day = start
-    while day <= end:
-        if day.weekday() in weekdays:
-            days.append(day)
-        day += datetime.timedelta(days=1)
-    return days
+    intervals = []
+    prev_month_last = month_start - datetime.timedelta(days=1)
+    if window_start <= prev_month_last:
+        intervals.append((window_start, prev_month_last))
+    day = month_start
+    while day <= today:
+        sunday = day - datetime.timedelta(days=day.weekday()) + datetime.timedelta(days=6)
+        end = min(sunday, today)
+        intervals.append((day, end))
+        day = end + datetime.timedelta(days=1)
+    return intervals
 
 
 def _parse_day(value):
@@ -120,22 +120,18 @@ def _rate_text(rate):
 
 def trend_points(records, today=None):
     """
-    Build the baseline row (previous month's last natural week) and one row per
-    Wednesday/Friday trigger plus today, all cumulative from their own period start.
+    Build one row per natural-week interval from the previous month's last week to today.
+    Numbers are measured over that interval: backlog/overdue describe its end date,
+    period_closed counts the closures inside it, and the rate is cumulative.
     :param records: list of (created_day, closed_day or None)
     :param today: date of the run, defaults to the current date in UTC+8
-    :return: (window_row, rows); every point carries label, new, closed, rate, rate_text,
-             backlog, overdue and severe
+    :return: (window_row, rows); every point carries label, new, period_closed, closed,
+             rate, rate_text, backlog, overdue and severe
     """
     today = today or datetime.datetime.now(GITCODE_TZ).date()
     window_start, month_start = month_trend_window(today)
     overdue_days = DURATION_STAGES[0][0]      # 7
     severe_days = DURATION_STAGES[1][0]       # 30, 严重与长期合并
-
-    def backlog_at(start_day):
-        """Items not closed yet when start_day begins."""
-        return sum(1 for created, closed in records
-                   if created < start_day and (closed is None or closed >= start_day))
 
     def stock_at(day):
         """Open items on that day, split by age."""
@@ -147,38 +143,41 @@ def trend_points(records, today=None):
             'severe': sum(1 for created in live if (day - created).days > severe_days),
         }
 
-    def summarize(start_day, end_day, base):
-        new = sum(1 for created, _ in records if start_day <= created <= end_day)
-        closed = sum(1 for _, closed in records
-                     if closed and start_day <= closed <= end_day)
-        denominator = base + new
-        rate = (closed / denominator) if denominator else None
+    def label_of(start_day, end_day):
+        text = start_day.strftime('%m-%d') if start_day == end_day else \
+            '{}~{}'.format(start_day.strftime('%m-%d'), end_day.strftime('%m-%d'))
+        if end_day < month_start:
+            return '{}（上月末周）'.format(text)
+        if end_day == today:
+            return '{}（本周至今）'.format(text)
+        return text
+
+    def summarize(start_day, end_day, closed_before):
+        period_closed = sum(1 for _, closed in records
+                            if closed and start_day <= closed <= end_day)
+        cumulative_closed = closed_before + period_closed
         point = stock_at(end_day)
-        point.update({'new': new, 'closed': closed, 'rate': rate, 'rate_text': _rate_text(rate)})
+        # denominator = everything the period ever contained = closed + still open
+        denominator = cumulative_closed + point['backlog']
+        point.update({
+            'period_closed': period_closed,
+            'closed': cumulative_closed,
+            'rate': (cumulative_closed / denominator) if denominator else None,
+            'label': label_of(start_day, end_day),
+        })
+        point['rate_text'] = _rate_text(point['rate'])
         return point
 
     prev_month_last = month_start - datetime.timedelta(days=1)
-    window_row = summarize(window_start, prev_month_last, backlog_at(window_start))
-    if window_start == prev_month_last:
-        # the previous month ended on a Monday, so its last natural week is a single day
-        window_row['label'] = '{}（上月末周）'.format(window_start.strftime('%m-%d'))
-    else:
-        window_row['label'] = '{}~{}（上月末周）'.format(window_start.strftime('%m-%d'),
-                                                      prev_month_last.strftime('%m-%d'))
+    window_row = summarize(window_start, prev_month_last, 0)
 
-    days = trigger_days(month_start, today)
-    if today not in days:
-        # a manual run off schedule still reports up to the current day
-        days.append(today)
-
-    base_month = backlog_at(month_start)
     rows = []
-    for day in days:
-        point = summarize(month_start, day, base_month)
-        if day == today:
-            point['label'] = '{}（当天）'.format(day.strftime('%m-%d'))
-        else:
-            point['label'] = '{}（周{}）'.format(day.strftime('%m-%d'), '一二三四五六日'[day.weekday()])
+    cumulative = 0
+    for start_day, end_day in week_intervals(window_start, month_start, today):
+        if start_day < month_start:
+            continue                     # the baseline row already covers it
+        point = summarize(start_day, end_day, cumulative)
+        cumulative = point['closed']
         rows.append(point)
     return window_row, rows
 
@@ -299,13 +298,18 @@ def render_closure_trend(trend, label):
                    'vertical-align:middle;margin-left:6px">'
                    '<div style="background:#70AD47;height:9px;width:{}%"></div></div>').format(width)
         parts.append('<tr><td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
-                     '<td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}{}</td></tr>'
+                     '<td style="{}">{}</td><td style="{}">{}</td><td style="{}">{}</td>'
+                     '<td style="{}">{}{}</td></tr>'
                      .format(name_style, row['label'], cell_style, row['backlog'], cell_style,
                              row['overdue'], cell_style, row['severe'], cell_style,
-                             row['closed'], cell_style, row['rate_text'], bar))
+                             row['period_closed'], cell_style, row['closed'], cell_style,
+                             row['rate_text'], bar))
     parts.append('</table>')
     parts.append('<p style="font-size:12px;color:#666;margin:6px 0 0">'
-                 '闭环率 = 累计闭环 /（累计闭环 + 待处理），待处理即该时点的未闭环存量；'
+                 '每行是一个自然周（周一~周日）；待处理为该区间末的未闭环存量，'
+                 '期间闭环为本区间内闭环的数量；累计闭环与闭环率按自然月累计、月初重置'
+                 '（上月末周一行只统计该周）；'
+                 '闭环率 = 累计闭环 /（累计闭环 + 待处理）；'
                  '超期指开启天数 &gt; 7 天，严重超期指 &gt; 30 天；'
                  '仅统计 GitCode API 可见仓库，私有仓库不在其中。</p>')
     return ''.join(parts)
